@@ -41,7 +41,28 @@
 
 The desktop Vault app is the centerpiece. It removes all browser extension constraints (bundle size, cold starts, no filesystem, no persistence) and becomes the place where heavier computation lives.
 
-### 1a. Vault App (Tauri)
+### 1a. Vault App (Tauri) — COMPLETE
+
+**Status:** Shipped and merged to `main`. Core redaction loop is validated end-to-end.
+
+**What was built**: A local desktop application (Tauri 2 + Svelte 5 + Rust) where users drop sensitive files (`.txt`, `.md`, `.csv`, `.json`) and text, browse masked/unmasked versions with entity highlights, and export redacted copies (clipboard, file, zip).
+
+**Implemented features:**
+- Drop zone for file ingestion + text paste input
+- Regex detection (EMAIL, PHONE, AMT, API_KEY) + NLP detection (PERSON, ORG via compromise.js)
+- Token masking engine (`[[TYPE_N]]` format) with deduplication and idempotency
+- SQLite storage (rusqlite) with items + entities tables
+- Three-panel UI: file list, content viewer with masked/raw toggle, entity sidebar
+- Entity highlights (color-coded by type) with tooltips
+- Export: clipboard copy, single file save (native dialog), batch zip archive
+- Delete with confirmation
+
+**Not yet implemented (deferred):**
+- Encryption at rest (AES-256-GCM via `ring`) — requires passphrase/auth flow
+- Structure-preserving substitution — requires synthetic name/email/amount generators
+- LLM-assisted detection (Ollama) — requires runtime detection and LLM integration
+- PDF support — requires Rust-side text extraction
+- `@aether-shroud/core` extraction — requires stable interfaces
 
 **What it is**: A local desktop application where users drop sensitive files and text, browse masked/unmasked versions side by side, and export redacted copies.
 
@@ -82,6 +103,18 @@ The desktop Vault app is the centerpiece. It removes all browser extension const
 | Storage engine | **SQLite** (`rusqlite`) | Relational queries for cross-file entity search, mature ecosystem |
 | PDF parsing | **Deferred to Phase 1b** | Rust-side (`lopdf`) when implemented. Phase 1 ships with text formats only. |
 | Encryption at rest | **App-level AES-256-GCM** via Rust `ring` | Per-field encryption of sensitive columns. Key from user passphrase via Argon2. |
+
+### Upcoming: Phase 1 deferred work
+
+The following items were deferred from Phase 1a to ship the core loop faster. They should be tackled before moving to Phase 2 (extension ↔ vault integration), in roughly this order:
+
+| Priority | Item | Depends on | Scope |
+|----------|------|-----------|-------|
+| 1 | **Encryption at rest** | — | Add passphrase setup flow, Argon2 key derivation, AES-256-GCM field encryption of `raw_content` via Rust `ring` crate |
+| 2 | **PDF support (Phase 1b)** | — | Rust-side text extraction via `lopdf`, text-only export of masked content |
+| 3 | **Structure-preserving substitution** | — | Synthetic generators (names, emails, amounts, dates), strategy interface, user-selectable masking mode |
+| 4 | **LLM-assisted detection (Ollama)** | — | Auto-detect Ollama, refinement loop on top of regex + NLP, structured prompting for NER |
+| 5 | **`@aether-shroud/core` extraction** | 1-4 stable | pnpm workspaces, shared package, extension consumes core. Gate for Phase 2 |
 
 ### 1b. Masking Techniques
 
