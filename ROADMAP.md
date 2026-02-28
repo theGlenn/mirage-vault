@@ -48,7 +48,7 @@ The desktop Vault app is the centerpiece. It removes all browser extension const
 #### Core Features
 
 **Drop zone & ingestion**
-- Drag-and-drop files into the vault. Supported formats to start: `.txt`, `.md`, `.csv`, `.json`, `.pdf`.
+- Drag-and-drop files into the vault. Supported formats to start: `.txt`, `.md`, `.csv`, `.json`.
 - Paste raw text via a text input area.
 - Each ingested item gets an entry in the vault: original (encrypted at rest) + masked version + metadata (detected entities, masking strategy used, timestamp).
 
@@ -66,7 +66,7 @@ The desktop Vault app is the centerpiece. It removes all browser extension const
 **Vault storage**
 - SQLite database via Tauri's filesystem access.
 - Schema: `items(id, name, type, raw_encrypted, masked, created_at)`, `entities(id, item_id, type, original, substitution, span_start, span_end)`, `mappings(vault_session_id, token, original)`.
-- Encryption at rest: raw originals encrypted with a user-provided passphrase or OS keychain-derived key.
+- Encryption at rest: application-level encryption. Raw originals encrypted per-field using AES-256-GCM via Rust `ring` crate before writing to SQLite. Metadata columns (name, type, timestamps) remain in plaintext for queryability. Key derived from user passphrase via Argon2.
 - Vault is local-only. Never synced, never uploaded.
 
 **Tauri specifics**
@@ -74,13 +74,14 @@ The desktop Vault app is the centerpiece. It removes all browser extension const
 - `@aether-shroud/core` runs in the frontend webview for masking logic. Rust side handles storage and crypto only.
 - Tauri v2 for multi-window support if needed later.
 
-#### Technical Decisions to Make
+#### Technical Decisions
 
-| Decision | Options | Notes |
-|----------|---------|-------|
-| Frontend framework | Solid / Svelte / React | Solid or Svelte for bundle size. React if team velocity matters more. |
-| PDF parsing | `pdf-parse` (JS) / `lopdf` (Rust) | JS keeps it in the webview with core. Rust is faster and handles edge cases. |
-| Encryption at rest | AES-256-GCM via Rust `ring` crate / OS keychain | `ring` is battle-tested. Keychain integration is more user-friendly. |
+| Decision | Resolved | Notes |
+|----------|----------|-------|
+| Frontend framework | **Svelte 5** | Already scaffolded in `aether-vault/` |
+| Storage engine | **SQLite** (`rusqlite`) | Relational queries for cross-file entity search, mature ecosystem |
+| PDF parsing | **Deferred to Phase 1b** | Rust-side (`lopdf`) when implemented. Phase 1 ships with text formats only. |
+| Encryption at rest | **App-level AES-256-GCM** via Rust `ring` | Per-field encryption of sensitive columns. Key from user passphrase via Argon2. |
 
 ### 1b. Masking Techniques
 
@@ -156,17 +157,17 @@ For the Vault app (not the extension), we can use a local LLM to improve entity 
 
 #### Document Processing
 
-**PDF** (Phase 1 priority):
-- Extract text layer using `pdf-parse` or equivalent.
-- Run masking on extracted text.
-- For export: produce a new PDF with masked text overlaid on redacted regions. Alternatively, export as `.txt` with masked content (simpler, good enough for v1).
-- Image-based PDFs (scanned documents) are out of scope for Phase 1 - require OCR, which is a separate problem.
-
-**Plain text** (`.txt`, `.md`, `.csv`, `.json`):
+**Phase 1 formats** (`.txt`, `.md`, `.csv`, `.json`):
 - Direct text processing. Straightforward.
 - For `.csv` and `.json`: parse structure, mask values only (preserve keys/headers).
 
-**Future formats** (post Phase 1):
+**Phase 1b milestone: PDF support** (post core vault loop):
+- Deferred from Phase 1 to reduce scope. Implement once the core ingest → detect → mask → browse → export loop is validated with text-based formats.
+- Recommended approach: Rust-side extraction via `lopdf` / `pdf-extract` in the Tauri backend, sending extracted text to the frontend for masking.
+- Extract text layer from native PDFs. Image-based PDFs (scanned documents) require OCR and are out of scope.
+- Export: start with `.txt` export of masked content. Masked PDF output is a stretch goal.
+
+**Future formats** (post Phase 1b):
 - `.docx`: Extract text via `mammoth` or similar, mask, reconstruct.
 - Images with text: OCR via Tesseract (Rust or WASM), mask detected text regions.
 - Code files: Developer-focused detection (API keys, secrets, internal URLs).
@@ -288,7 +289,9 @@ Step 4 is the tricky part for cloud-based clients. Rehydration options:
 
 ### Core Library Extraction
 
-Before any of Phase 1-3, extract `@aether-shroud/core` from `src/shared/`:
+**Deferred.** Build detection and masking logic directly in `aether-vault/` first. Extract `@aether-shroud/core` once the Vault app works end-to-end and interfaces have stabilized. Target: after Phase 1, before Phase 2 (when the extension needs to share code).
+
+Planned package structure when extracted:
 
 ```
 packages/

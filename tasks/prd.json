@@ -1,0 +1,319 @@
+{
+  "project": "Aether Vault",
+  "branchName": "ralph/vault-v1",
+  "description": "Aether Vault v1 - Core redaction loop: ingest text files, detect and mask PII with regex + compromise.js, browse masked/raw views, export redacted files. Fully local Tauri desktop app.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Initialize SQLite database and schema on first launch",
+      "description": "As a developer, I need the Rust backend to create and manage a SQLite database so that vault items and entities can be persisted.",
+      "acceptanceCriteria": [
+        "Add rusqlite dependency to Cargo.toml",
+        "On app startup, create SQLite database file in Tauri app data directory if it does not exist",
+        "Create items table: id (INTEGER PRIMARY KEY), name (TEXT), file_type (TEXT), raw_content (TEXT), masked_content (TEXT), created_at (TEXT)",
+        "Create entities table: id (INTEGER PRIMARY KEY), item_id (INTEGER FOREIGN KEY), entity_type (TEXT), original_value (TEXT), token (TEXT), span_start (INTEGER), span_end (INTEGER)",
+        "If database already exists, open it without recreating tables (use CREATE TABLE IF NOT EXISTS)",
+        "Database handle is managed as Tauri state and accessible to all commands",
+        "cargo check passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Tauri IPC commands for vault CRUD operations",
+      "description": "As a developer, I need Rust-side Tauri commands for creating, reading, and deleting vault items so the frontend can interact with the database.",
+      "acceptanceCriteria": [
+        "save_item command: accepts name, file_type, raw_content, masked_content, and a list of entities. Inserts into items and entities tables. Returns the created item id.",
+        "list_items command: returns all items (id, name, file_type, entity count, created_at) sorted by created_at DESC. Does NOT return raw_content or masked_content (lightweight list).",
+        "get_item command: accepts item id, returns full item with raw_content, masked_content, and all associated entities.",
+        "delete_item command: accepts item id, deletes the item and its associated entities in a transaction.",
+        "All commands are registered in the Tauri builder",
+        "Serde structs defined for request/response types",
+        "cargo check passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Tauri IPC commands for file export and zip archive",
+      "description": "As a developer, I need Rust-side commands for saving files to disk and creating zip archives so the frontend can trigger exports.",
+      "acceptanceCriteria": [
+        "Add zip crate dependency to Cargo.toml",
+        "export_file command: accepts file name, content, and file extension. Opens native save dialog via Tauri dialog plugin. Writes masked content to chosen path. Default filename is [name]_masked.[ext].",
+        "export_zip command: accepts a list of items (name, file_type, masked_content). Opens native save dialog for .zip file. Creates zip archive containing one masked file per item.",
+        "Zip file names follow [name]_masked.[ext] format",
+        "Zip contains ONLY masked content, no original values",
+        "Add tauri-plugin-dialog dependency for native save dialogs",
+        "cargo check passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Regex-based entity detection module",
+      "description": "As a developer, I need regex detectors for structured PII so that emails, phone numbers, financial amounts, and API keys are caught reliably.",
+      "acceptanceCriteria": [
+        "Create src/lib/detectors/regex.ts module",
+        "Detector identifies email addresses (user@domain.tld patterns)",
+        "Detector identifies US/international phone numbers (with/without country code, dashes, spaces, parens)",
+        "Detector identifies financial amounts ($1,234.56 style with currency symbols $, EUR, GBP)",
+        "Detector identifies common API key patterns (AWS AKIA keys, 32+ char hex strings, base64 tokens with key-like prefixes)",
+        "Each detection returns: { type: string, value: string, start: number, end: number }",
+        "Exported function signature: detectRegex(text: string): Detection[]",
+        "Unit tests with node:test cover each entity type with positive matches and negative cases (non-PII text)",
+        "pnpm check passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "All detection runs in the Svelte webview, not in Rust."
+    },
+    {
+      "id": "US-005",
+      "title": "NLP-based entity detection with compromise.js",
+      "description": "As a developer, I need NLP-based detection for person names and organizations so that unstructured PII is caught beyond what regex can find.",
+      "acceptanceCriteria": [
+        "Add compromise as a dependency in package.json",
+        "Create src/lib/detectors/nlp.ts module",
+        "Detects person names (first, last, full names) using compromise.people()",
+        "Detects organization names using compromise.organizations()",
+        "Each detection returns: { type: string, value: string, start: number, end: number }",
+        "Exported function signature: detectNlp(text: string): Detection[]",
+        "Unit tests with node:test cover person name and org detection with sample paragraphs",
+        "pnpm check passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Detection pipeline: merge regex and NLP results",
+      "description": "As a developer, I need a unified detection pipeline that combines regex and NLP results with deduplication so that all entity types are detected in a single pass.",
+      "acceptanceCriteria": [
+        "Create src/lib/detectors/index.ts that imports detectRegex and detectNlp",
+        "Exported function: detect(text: string): Detection[] runs both detectors",
+        "Overlapping spans are deduplicated: if two detections overlap, the longer (more specific) one wins",
+        "Results are sorted by start offset ascending",
+        "Shared Detection type is defined in src/lib/detectors/types.ts: { type: EntityType, value: string, start: number, end: number }",
+        "EntityType is a union: 'EMAIL' | 'PHONE' | 'AMT' | 'API_KEY' | 'PERSON' | 'ORG'",
+        "Unit tests verify deduplication and merging with text containing overlapping entities",
+        "pnpm check passes"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Token masking engine",
+      "description": "As a developer, I need a masking engine that replaces detected entities with [[TYPE_N]] tokens so that sensitive data is redacted consistently.",
+      "acceptanceCriteria": [
+        "Create src/lib/masker.ts module",
+        "Exported function: mask(text: string, detections: Detection[]): MaskResult",
+        "MaskResult contains: { maskedText: string, mappings: { token: string, original: string, type: EntityType, start: number, end: number }[] }",
+        "Tokens follow [[TYPE_N]] format (e.g., [[EMAIL_1]], [[PERSON_2]])",
+        "Counter increments per type within a single call (first email = [[EMAIL_1]], second = [[EMAIL_2]])",
+        "Same entity value appearing multiple times maps to the same token",
+        "Masking is idempotent: mask(mask(text)) produces the same output as mask(text) — token patterns [[...]] are not re-detected",
+        "Unit tests cover: multi-entity text, duplicate entities, idempotency, and empty input",
+        "pnpm check passes"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "App layout shell and empty state with drop zone",
+      "description": "As a user, I want to see a clear app layout with a drop zone so I can start adding files immediately.",
+      "acceptanceCriteria": [
+        "Replace the Tauri demo page content with the app layout: left sidebar (file list), center (content viewer), right sidebar (entity panel)",
+        "When no files exist in the vault, the center area shows a prominent drop zone with dashed border, file icon, and text 'Drop .txt, .md, .csv, or .json files here'",
+        "Drop zone accepts .txt, .md, .csv, .json files via HTML drag and drop events",
+        "Unsupported file types show an error message on drop",
+        "Multiple files can be dropped at once",
+        "Drop zone shows a visual hover state (border color change) when files are dragged over it",
+        "Basic CSS styling for the three-panel layout (no component library required, plain CSS or scoped styles)",
+        "pnpm check passes",
+        "Verify in browser using dev tools"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "Use Svelte 5 runes ($state, $derived) for reactive state."
+    },
+    {
+      "id": "US-009",
+      "title": "Ingestion pipeline: drop files, detect, mask, store",
+      "description": "As a user, I want dropped files to be automatically processed and stored so I can see them in my vault.",
+      "acceptanceCriteria": [
+        "When files are dropped on the drop zone, read file contents as text via FileReader API",
+        "Run the detect() pipeline on the file text content",
+        "Run the mask() engine on the text with detection results",
+        "Call the save_item Tauri command via invoke() with: file name, file type, raw content, masked content, and entity list",
+        "After saving, refresh the file list in the sidebar",
+        "Show a brief loading indicator during processing",
+        "Errors during processing display a visible error message",
+        "pnpm check passes",
+        "Verify in browser using dev tools"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "This story wires together the detection, masking, and storage layers built in US-004 through US-007."
+    },
+    {
+      "id": "US-010",
+      "title": "Text paste ingestion",
+      "description": "As a user, I want to paste raw text into the app so I can redact content that isn't in a file.",
+      "acceptanceCriteria": [
+        "A textarea input is available alongside or within the drop zone area",
+        "A submit button processes the pasted text through the same ingestion pipeline (detect, mask, save)",
+        "Pasted text is stored as a .txt item with auto-generated name: 'Pasted text - YYYY-MM-DD HH:MM'",
+        "After submission, the textarea clears and the new item appears in the file list",
+        "pnpm check passes",
+        "Verify in browser using dev tools"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "File browser list view",
+      "description": "As a user, I want to see all my vault items in a list so I can find and select files to review.",
+      "acceptanceCriteria": [
+        "Left sidebar shows a list of all vault items loaded via list_items Tauri command on app startup",
+        "Each item displays: file name, file type badge (.txt, .md, etc.), entity count, and creation date",
+        "List is sorted by most recently added (newest first)",
+        "Clicking an item selects it (visual highlight) and loads its full data via get_item command",
+        "Empty state text shown when no files exist: 'No files in vault'",
+        "pnpm check passes",
+        "Verify in browser using dev tools"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "Content viewer with masked/raw toggle",
+      "description": "As a user, I want to toggle between masked and raw views of a file so I can verify what was redacted.",
+      "acceptanceCriteria": [
+        "Center content area displays the selected file's content as preformatted text",
+        "A toggle button or switch at the top switches between 'Masked' and 'Original' views",
+        "Masked view shows the token-redacted text (e.g., [[EMAIL_1]])",
+        "Original view shows the raw unredacted text",
+        "Default view on selection is Masked",
+        "When no file is selected, show a placeholder message",
+        "pnpm check passes",
+        "Verify in browser using dev tools"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "Entity highlights and legend in original view",
+      "description": "As a user, I want detected entities visually highlighted in the original view so I can see exactly what was redacted.",
+      "acceptanceCriteria": [
+        "In Original view, each detected entity is wrapped in a colored span based on type: blue for EMAIL, green for PERSON, orange for ORG, red for AMT, purple for PHONE, gray for API_KEY",
+        "A color legend is visible below the toggle showing entity type to color mapping",
+        "Hovering over a highlighted entity shows a tooltip with the token it maps to (e.g., '→ [[EMAIL_1]]')",
+        "Non-entity text renders normally between highlighted spans",
+        "pnpm check passes",
+        "Verify in browser using dev tools"
+      ],
+      "priority": 13,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "Entity list sidebar panel",
+      "description": "As a user, I want to see a summary of all detected entities for the selected file so I can review redactions at a glance.",
+      "acceptanceCriteria": [
+        "Right sidebar shows entities for the currently selected file",
+        "Entities are grouped by type with section headers (EMAIL, PERSON, ORG, AMT, PHONE, API_KEY)",
+        "Each entity shows: original value, its token (e.g., [[EMAIL_1]]), and occurrence count in the file",
+        "When no file is selected, sidebar shows placeholder text",
+        "Groups with zero entities are hidden",
+        "pnpm check passes",
+        "Verify in browser using dev tools"
+      ],
+      "priority": 14,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "title": "Export: copy masked text to clipboard",
+      "description": "As a user, I want to copy the masked version of a file to my clipboard so I can paste it into an LLM chat.",
+      "acceptanceCriteria": [
+        "A 'Copy' button is visible in the content viewer toolbar when a file is selected",
+        "Clicking it copies the full masked text to the system clipboard via navigator.clipboard.writeText()",
+        "A toast notification appears briefly confirming 'Copied to clipboard'",
+        "Toast auto-dismisses after 2 seconds",
+        "pnpm check passes",
+        "Verify in browser using dev tools"
+      ],
+      "priority": 15,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-016",
+      "title": "Export: save masked file to disk",
+      "description": "As a user, I want to save a masked file to disk so I can use it outside the app.",
+      "acceptanceCriteria": [
+        "An 'Export' button is visible in the content viewer toolbar when a file is selected",
+        "Clicking it calls the export_file Tauri command which opens a native save dialog",
+        "Default file name is [original_name]_masked.[ext]",
+        "File is saved with the same extension as the original",
+        "Saved file contains only the masked content",
+        "pnpm check passes"
+      ],
+      "priority": 16,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-017",
+      "title": "Export: batch zip archive",
+      "description": "As a user, I want to export all vault items as a zip so I can share a batch of redacted files.",
+      "acceptanceCriteria": [
+        "An 'Export All' button is visible in the file list sidebar header",
+        "Clicking it loads full masked content for all items via get_item, then calls export_zip Tauri command",
+        "Native save dialog opens for a .zip file",
+        "Zip contains one file per vault item named [name]_masked.[ext]",
+        "Zip does NOT contain original values or entity mappings",
+        "pnpm check passes"
+      ],
+      "priority": 17,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-018",
+      "title": "Delete vault items",
+      "description": "As a user, I want to delete files from my vault so I can manage my stored data.",
+      "acceptanceCriteria": [
+        "A delete button (trash icon or text) is visible per item in the file list",
+        "Clicking it shows a confirmation dialog: 'Delete [filename]? This cannot be undone.'",
+        "On confirmation, calls delete_item Tauri command with the item id",
+        "File list refreshes immediately after deletion",
+        "If the deleted item was selected, the content viewer resets to the empty/placeholder state",
+        "pnpm check passes",
+        "Verify in browser using dev tools"
+      ],
+      "priority": 18,
+      "passes": true,
+      "notes": ""
+    }
+  ]
+}
