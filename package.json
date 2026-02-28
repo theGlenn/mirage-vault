@@ -1,0 +1,23 @@
+{
+  "name": "aether-shroud-mvp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AETHER SHROUD MVP Chrome extension for reversible anonymization in ChatGPT UI",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs --watch",
+    "demo": "tsc -p tsconfig.test.json && node .test-dist/scripts/demo.js",
+    "test": "tsc -p tsconfig.test.json && node --test .test-dist/tests/*.test.js",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.1.29",
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.3"
+  },
+  "dependencies": {
+    "compromise": "^14.15.0"
+  }
+}
