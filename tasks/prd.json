@@ -1,319 +1,154 @@
 {
   "project": "Aether Vault",
-  "branchName": "ralph/vault-v1",
-  "description": "Aether Vault v1 - Core redaction loop: ingest text files, detect and mask PII with regex + compromise.js, browse masked/raw views, export redacted files. Fully local Tauri desktop app.",
+  "branchName": "ralph/pdf-support",
+  "description": "Phase 1b - PDF Support: Add PDF file ingestion to the Vault app using lopdf for Rust-side text extraction. PDFs flow through the existing detection and masking pipeline. Includes page markers, extraction warnings, .txt export, and experimental masked PDF export.",
   "userStories": [
     {
       "id": "US-001",
-      "title": "Initialize SQLite database and schema on first launch",
-      "description": "As a developer, I need the Rust backend to create and manage a SQLite database so that vault items and entities can be persisted.",
+      "title": "Add warning and raw_pdf_bytes columns to items table",
+      "description": "As a developer, I need schema changes to support PDF-specific data so that extraction warnings and original PDF bytes can be stored.",
       "acceptanceCriteria": [
-        "Add rusqlite dependency to Cargo.toml",
-        "On app startup, create SQLite database file in Tauri app data directory if it does not exist",
-        "Create items table: id (INTEGER PRIMARY KEY), name (TEXT), file_type (TEXT), raw_content (TEXT), masked_content (TEXT), created_at (TEXT)",
-        "Create entities table: id (INTEGER PRIMARY KEY), item_id (INTEGER FOREIGN KEY), entity_type (TEXT), original_value (TEXT), token (TEXT), span_start (INTEGER), span_end (INTEGER)",
-        "If database already exists, open it without recreating tables (use CREATE TABLE IF NOT EXISTS)",
-        "Database handle is managed as Tauri state and accessible to all commands",
+        "Add 'warning' TEXT column (nullable) to items table using ALTER TABLE IF NOT EXISTS or equivalent idempotent migration",
+        "Add 'raw_pdf_bytes' BLOB column (nullable) to items table using ALTER TABLE IF NOT EXISTS or equivalent idempotent migration",
+        "Existing items are unaffected (new columns default to NULL)",
+        "Update the get_item command response struct to include 'warning' (Option<String>) field",
+        "Update the save_item command to accept an optional 'warning' (Option<String>) parameter",
+        "Update the save_item command to accept an optional 'raw_pdf_bytes' (Option<Vec<u8>>) parameter",
+        "Update the list_items response struct to include 'warning' (Option<String>) so the file list can show warning indicators",
         "cargo check passes"
       ],
       "priority": 1,
-      "passes": true,
-      "notes": ""
+      "passes": false,
+      "notes": "Use ALTER TABLE ADD COLUMN wrapped in a check to make it idempotent. rusqlite will error if the column already exists, so catch that error and ignore it."
     },
     {
       "id": "US-002",
-      "title": "Tauri IPC commands for vault CRUD operations",
-      "description": "As a developer, I need Rust-side Tauri commands for creating, reading, and deleting vault items so the frontend can interact with the database.",
+      "title": "Add lopdf dependency and extract_pdf_text Tauri command",
+      "description": "As a developer, I need a Rust command that extracts text from PDF bytes so the frontend can process PDF content through the existing masking pipeline.",
       "acceptanceCriteria": [
-        "save_item command: accepts name, file_type, raw_content, masked_content, and a list of entities. Inserts into items and entities tables. Returns the created item id.",
-        "list_items command: returns all items (id, name, file_type, entity count, created_at) sorted by created_at DESC. Does NOT return raw_content or masked_content (lightweight list).",
-        "get_item command: accepts item id, returns full item with raw_content, masked_content, and all associated entities.",
-        "delete_item command: accepts item id, deletes the item and its associated entities in a transaction.",
-        "All commands are registered in the Tauri builder",
-        "Serde structs defined for request/response types",
+        "Add lopdf crate to Cargo.toml",
+        "Create extract_pdf_text Tauri command that accepts PDF content as Vec<u8>",
+        "Command loads the PDF via lopdf::Document::load_from() using a Cursor over the bytes",
+        "Text is extracted page by page using document.extract_text(&[page_number]) for each page in document.get_pages()",
+        "Pages are concatenated with '\\n\\n--- Page N ---\\n\\n' markers between them",
+        "Command returns a struct with: text (String), page_count (u32), has_warning (bool)",
+        "If the entire PDF yields zero text (empty string after trimming), return an error: 'No extractable text found. This may be a scanned document.'",
+        "If some pages have text and others don't, return partial text with has_warning set to true",
+        "If lopdf fails to parse the file entirely, return an error: 'Failed to parse PDF file.'",
+        "Command is registered in the Tauri builder via generate_handler!",
         "cargo check passes"
       ],
       "priority": 2,
-      "passes": true,
-      "notes": ""
+      "passes": false,
+      "notes": "lopdf::Document::load_from() accepts impl Read. Use std::io::Cursor<Vec<u8>> to wrap the bytes. document.get_pages() returns a BTreeMap<u32, ObjectId> — iterate sorted keys for page order."
     },
     {
       "id": "US-003",
-      "title": "Tauri IPC commands for file export and zip archive",
-      "description": "As a developer, I need Rust-side commands for saving files to disk and creating zip archives so the frontend can trigger exports.",
+      "title": "Add export_masked_pdf Tauri command",
+      "description": "As a developer, I need a Rust command that creates a masked version of a PDF by replacing entity values with tokens in the original document.",
       "acceptanceCriteria": [
-        "Add zip crate dependency to Cargo.toml",
-        "export_file command: accepts file name, content, and file extension. Opens native save dialog via Tauri dialog plugin. Writes masked content to chosen path. Default filename is [name]_masked.[ext].",
-        "export_zip command: accepts a list of items (name, file_type, masked_content). Opens native save dialog for .zip file. Creates zip archive containing one masked file per item.",
-        "Zip file names follow [name]_masked.[ext] format",
-        "Zip contains ONLY masked content, no original values",
-        "Add tauri-plugin-dialog dependency for native save dialogs",
+        "Create export_masked_pdf Tauri command that accepts: original PDF bytes (Vec<u8>), a list of replacement pairs ({original: String, token: String}), and uses a native save dialog",
+        "Command loads the original PDF via lopdf::Document::load_from()",
+        "For each replacement pair, calls document.replace_text() to substitute original values with token strings",
+        "Opens a native save dialog with default filename '[name]_masked.pdf' via tauri_plugin_dialog",
+        "Saves the modified PDF to the chosen path via document.save_to()",
+        "Returns Ok(true) on success, Ok(false) if user cancels the dialog",
+        "If replace_text() or save fails, return an error string describing the failure",
+        "Define a ReplacementPair serde struct with 'original' and 'token' String fields",
+        "Command is registered in the Tauri builder via generate_handler!",
         "cargo check passes"
       ],
       "priority": 3,
-      "passes": true,
-      "notes": ""
+      "passes": false,
+      "notes": "lopdf replace_text() may not work for all font encodings. The frontend should catch errors and fall back to .txt export."
     },
     {
       "id": "US-004",
-      "title": "Regex-based entity detection module",
-      "description": "As a developer, I need regex detectors for structured PII so that emails, phone numbers, financial amounts, and API keys are caught reliably.",
+      "title": "Update drop zone to accept PDF files and wire ingestion",
+      "description": "As a user, I want to drop PDF files into the vault so they are automatically extracted, masked, and stored.",
       "acceptanceCriteria": [
-        "Create src/lib/detectors/regex.ts module",
-        "Detector identifies email addresses (user@domain.tld patterns)",
-        "Detector identifies US/international phone numbers (with/without country code, dashes, spaces, parens)",
-        "Detector identifies financial amounts ($1,234.56 style with currency symbols $, EUR, GBP)",
-        "Detector identifies common API key patterns (AWS AKIA keys, 32+ char hex strings, base64 tokens with key-like prefixes)",
-        "Each detection returns: { type: string, value: string, start: number, end: number }",
-        "Exported function signature: detectRegex(text: string): Detection[]",
-        "Unit tests with node:test cover each entity type with positive matches and negative cases (non-PII text)",
-        "pnpm check passes"
+        "Drop zone accepts .pdf files in addition to .txt, .md, .csv, .json",
+        "Drop zone instructional text updated to include .pdf in the list of supported formats",
+        "When a .pdf file is dropped, read file as ArrayBuffer via FileReader (not as text)",
+        "Convert ArrayBuffer to Uint8Array and pass to invoke('extract_pdf_text', { content: Array.from(uint8array) })",
+        "On success: feed extracted text through detect() and mask() pipeline, then call save_item with file_type 'pdf', the extracted text as raw_content, masked text as masked_content, warning if has_warning is true, and the original PDF bytes as raw_pdf_bytes",
+        "On extraction error: show error toast with the error message, do not save to vault",
+        "After saving, refresh the file list",
+        "pnpm check passes",
+        "Verify in browser using dev tools"
       ],
       "priority": 4,
-      "passes": true,
-      "notes": "All detection runs in the Svelte webview, not in Rust."
+      "passes": false,
+      "notes": "PDF files must be read as ArrayBuffer (not text). The bytes are sent to Rust as Vec<u8> via invoke. Non-PDF files continue to use FileReader.readAsText() as before."
     },
     {
       "id": "US-005",
-      "title": "NLP-based entity detection with compromise.js",
-      "description": "As a developer, I need NLP-based detection for person names and organizations so that unstructured PII is caught beyond what regex can find.",
+      "title": "Display extraction warnings for PDF items",
+      "description": "As a user, I want to see a warning when a PDF was only partially extracted so I know the results may be incomplete.",
       "acceptanceCriteria": [
-        "Add compromise as a dependency in package.json",
-        "Create src/lib/detectors/nlp.ts module",
-        "Detects person names (first, last, full names) using compromise.people()",
-        "Detects organization names using compromise.organizations()",
-        "Each detection returns: { type: string, value: string, start: number, end: number }",
-        "Exported function signature: detectNlp(text: string): Detection[]",
-        "Unit tests with node:test cover person name and org detection with sample paragraphs",
-        "pnpm check passes"
+        "When a PDF item with a non-null warning is selected, display a yellow warning banner above the content viewer text: 'Some pages in this PDF could not be extracted. Results may be incomplete.'",
+        "The warning text comes from the item's warning field in the database",
+        "Warning banner is styled distinctly (yellow/amber background, warning icon or prefix)",
+        "Warning banner is visible in both Masked and Original view modes",
+        "Non-PDF items or PDFs without warnings do not show any banner",
+        "Items in the file list sidebar show a small warning indicator (e.g., ⚠ icon) next to the file name if they have a warning",
+        "pnpm check passes",
+        "Verify in browser using dev tools"
       ],
       "priority": 5,
-      "passes": true,
+      "passes": false,
       "notes": ""
     },
     {
       "id": "US-006",
-      "title": "Detection pipeline: merge regex and NLP results",
-      "description": "As a developer, I need a unified detection pipeline that combines regex and NLP results with deduplication so that all entity types are detected in a single pass.",
+      "title": "Style page markers in content viewer for PDF items",
+      "description": "As a user, I want page boundaries clearly visible in the content viewer so I can understand the document structure.",
       "acceptanceCriteria": [
-        "Create src/lib/detectors/index.ts that imports detectRegex and detectNlp",
-        "Exported function: detect(text: string): Detection[] runs both detectors",
-        "Overlapping spans are deduplicated: if two detections overlap, the longer (more specific) one wins",
-        "Results are sorted by start offset ascending",
-        "Shared Detection type is defined in src/lib/detectors/types.ts: { type: EntityType, value: string, start: number, end: number }",
-        "EntityType is a union: 'EMAIL' | 'PHONE' | 'AMT' | 'API_KEY' | 'PERSON' | 'ORG'",
-        "Unit tests verify deduplication and merging with text containing overlapping entities",
-        "pnpm check passes"
+        "Page markers ('--- Page N ---') in both Masked and Original views are visually styled differently from content text",
+        "Page markers are rendered as centered text with muted color and horizontal rules above and below",
+        "Page markers are NOT treated as entity-detectable content: the buildHighlightedSegments() function skips page marker regions so they are not highlighted or detected as entities",
+        "Entity highlights work correctly on the text between page markers",
+        "PDF items show a .pdf badge in the file list (visually distinct from .txt, .md, etc.)",
+        "pnpm check passes",
+        "Verify in browser using dev tools"
       ],
       "priority": 6,
-      "passes": true,
-      "notes": ""
+      "passes": false,
+      "notes": "Page marker detection can use a simple regex: /\\n?--- Page \\d+ ---\\n?/g to identify marker positions in the text."
     },
     {
       "id": "US-007",
-      "title": "Token masking engine",
-      "description": "As a developer, I need a masking engine that replaces detected entities with [[TYPE_N]] tokens so that sensitive data is redacted consistently.",
+      "title": "Export PDF masked content as .txt file",
+      "description": "As a user, I want to export the masked version of a PDF as a text file so I can use it externally.",
       "acceptanceCriteria": [
-        "Create src/lib/masker.ts module",
-        "Exported function: mask(text: string, detections: Detection[]): MaskResult",
-        "MaskResult contains: { maskedText: string, mappings: { token: string, original: string, type: EntityType, start: number, end: number }[] }",
-        "Tokens follow [[TYPE_N]] format (e.g., [[EMAIL_1]], [[PERSON_2]])",
-        "Counter increments per type within a single call (first email = [[EMAIL_1]], second = [[EMAIL_2]])",
-        "Same entity value appearing multiple times maps to the same token",
-        "Masking is idempotent: mask(mask(text)) produces the same output as mask(text) — token patterns [[...]] are not re-detected",
-        "Unit tests cover: multi-entity text, duplicate entities, idempotency, and empty input",
+        "When exporting a PDF item via the existing Export button, the save dialog defaults to [original_name]_masked.txt (not .pdf)",
+        "The exported .txt file contains the masked text including page markers",
+        "Clipboard copy works the same as other file types (copies full masked text)",
+        "Batch zip export includes PDF items as [name]_masked.txt files",
+        "The existing export_file Tauri command is reused — the frontend passes 'txt' as the file extension for PDF items",
         "pnpm check passes"
       ],
       "priority": 7,
-      "passes": true,
-      "notes": ""
+      "passes": false,
+      "notes": "This mostly works already — just need to ensure that when file_type is 'pdf', the export uses .txt extension instead of .pdf."
     },
     {
       "id": "US-008",
-      "title": "App layout shell and empty state with drop zone",
-      "description": "As a user, I want to see a clear app layout with a drop zone so I can start adding files immediately.",
+      "title": "Add experimental masked PDF export button",
+      "description": "As a user, I want the option to export a masked PDF that preserves the original layout so I can share redacted documents in their original format.",
       "acceptanceCriteria": [
-        "Replace the Tauri demo page content with the app layout: left sidebar (file list), center (content viewer), right sidebar (entity panel)",
-        "When no files exist in the vault, the center area shows a prominent drop zone with dashed border, file icon, and text 'Drop .txt, .md, .csv, or .json files here'",
-        "Drop zone accepts .txt, .md, .csv, .json files via HTML drag and drop events",
-        "Unsupported file types show an error message on drop",
-        "Multiple files can be dropped at once",
-        "Drop zone shows a visual hover state (border color change) when files are dragged over it",
-        "Basic CSS styling for the three-panel layout (no component library required, plain CSS or scoped styles)",
+        "When viewing a PDF item, an additional button appears in the toolbar: 'Export PDF (experimental)'",
+        "The button is only visible for items where file_type is 'pdf'",
+        "Clicking the button calls invoke('export_masked_pdf') with the original PDF bytes from raw_pdf_bytes and the entity mappings (original_value -> token) from the item's entities",
+        "On success, show a toast: 'Masked PDF exported'",
+        "On error, show a toast: 'PDF export failed — falling back to text export' and trigger the standard .txt export",
+        "The button is labeled with '(experimental)' to set expectations",
         "pnpm check passes",
         "Verify in browser using dev tools"
       ],
       "priority": 8,
-      "passes": true,
-      "notes": "Use Svelte 5 runes ($state, $derived) for reactive state."
-    },
-    {
-      "id": "US-009",
-      "title": "Ingestion pipeline: drop files, detect, mask, store",
-      "description": "As a user, I want dropped files to be automatically processed and stored so I can see them in my vault.",
-      "acceptanceCriteria": [
-        "When files are dropped on the drop zone, read file contents as text via FileReader API",
-        "Run the detect() pipeline on the file text content",
-        "Run the mask() engine on the text with detection results",
-        "Call the save_item Tauri command via invoke() with: file name, file type, raw content, masked content, and entity list",
-        "After saving, refresh the file list in the sidebar",
-        "Show a brief loading indicator during processing",
-        "Errors during processing display a visible error message",
-        "pnpm check passes",
-        "Verify in browser using dev tools"
-      ],
-      "priority": 9,
-      "passes": true,
-      "notes": "This story wires together the detection, masking, and storage layers built in US-004 through US-007."
-    },
-    {
-      "id": "US-010",
-      "title": "Text paste ingestion",
-      "description": "As a user, I want to paste raw text into the app so I can redact content that isn't in a file.",
-      "acceptanceCriteria": [
-        "A textarea input is available alongside or within the drop zone area",
-        "A submit button processes the pasted text through the same ingestion pipeline (detect, mask, save)",
-        "Pasted text is stored as a .txt item with auto-generated name: 'Pasted text - YYYY-MM-DD HH:MM'",
-        "After submission, the textarea clears and the new item appears in the file list",
-        "pnpm check passes",
-        "Verify in browser using dev tools"
-      ],
-      "priority": 10,
-      "passes": true,
-      "notes": ""
-    },
-    {
-      "id": "US-011",
-      "title": "File browser list view",
-      "description": "As a user, I want to see all my vault items in a list so I can find and select files to review.",
-      "acceptanceCriteria": [
-        "Left sidebar shows a list of all vault items loaded via list_items Tauri command on app startup",
-        "Each item displays: file name, file type badge (.txt, .md, etc.), entity count, and creation date",
-        "List is sorted by most recently added (newest first)",
-        "Clicking an item selects it (visual highlight) and loads its full data via get_item command",
-        "Empty state text shown when no files exist: 'No files in vault'",
-        "pnpm check passes",
-        "Verify in browser using dev tools"
-      ],
-      "priority": 11,
-      "passes": true,
-      "notes": ""
-    },
-    {
-      "id": "US-012",
-      "title": "Content viewer with masked/raw toggle",
-      "description": "As a user, I want to toggle between masked and raw views of a file so I can verify what was redacted.",
-      "acceptanceCriteria": [
-        "Center content area displays the selected file's content as preformatted text",
-        "A toggle button or switch at the top switches between 'Masked' and 'Original' views",
-        "Masked view shows the token-redacted text (e.g., [[EMAIL_1]])",
-        "Original view shows the raw unredacted text",
-        "Default view on selection is Masked",
-        "When no file is selected, show a placeholder message",
-        "pnpm check passes",
-        "Verify in browser using dev tools"
-      ],
-      "priority": 12,
-      "passes": true,
-      "notes": ""
-    },
-    {
-      "id": "US-013",
-      "title": "Entity highlights and legend in original view",
-      "description": "As a user, I want detected entities visually highlighted in the original view so I can see exactly what was redacted.",
-      "acceptanceCriteria": [
-        "In Original view, each detected entity is wrapped in a colored span based on type: blue for EMAIL, green for PERSON, orange for ORG, red for AMT, purple for PHONE, gray for API_KEY",
-        "A color legend is visible below the toggle showing entity type to color mapping",
-        "Hovering over a highlighted entity shows a tooltip with the token it maps to (e.g., '→ [[EMAIL_1]]')",
-        "Non-entity text renders normally between highlighted spans",
-        "pnpm check passes",
-        "Verify in browser using dev tools"
-      ],
-      "priority": 13,
-      "passes": true,
-      "notes": ""
-    },
-    {
-      "id": "US-014",
-      "title": "Entity list sidebar panel",
-      "description": "As a user, I want to see a summary of all detected entities for the selected file so I can review redactions at a glance.",
-      "acceptanceCriteria": [
-        "Right sidebar shows entities for the currently selected file",
-        "Entities are grouped by type with section headers (EMAIL, PERSON, ORG, AMT, PHONE, API_KEY)",
-        "Each entity shows: original value, its token (e.g., [[EMAIL_1]]), and occurrence count in the file",
-        "When no file is selected, sidebar shows placeholder text",
-        "Groups with zero entities are hidden",
-        "pnpm check passes",
-        "Verify in browser using dev tools"
-      ],
-      "priority": 14,
-      "passes": true,
-      "notes": ""
-    },
-    {
-      "id": "US-015",
-      "title": "Export: copy masked text to clipboard",
-      "description": "As a user, I want to copy the masked version of a file to my clipboard so I can paste it into an LLM chat.",
-      "acceptanceCriteria": [
-        "A 'Copy' button is visible in the content viewer toolbar when a file is selected",
-        "Clicking it copies the full masked text to the system clipboard via navigator.clipboard.writeText()",
-        "A toast notification appears briefly confirming 'Copied to clipboard'",
-        "Toast auto-dismisses after 2 seconds",
-        "pnpm check passes",
-        "Verify in browser using dev tools"
-      ],
-      "priority": 15,
-      "passes": true,
-      "notes": ""
-    },
-    {
-      "id": "US-016",
-      "title": "Export: save masked file to disk",
-      "description": "As a user, I want to save a masked file to disk so I can use it outside the app.",
-      "acceptanceCriteria": [
-        "An 'Export' button is visible in the content viewer toolbar when a file is selected",
-        "Clicking it calls the export_file Tauri command which opens a native save dialog",
-        "Default file name is [original_name]_masked.[ext]",
-        "File is saved with the same extension as the original",
-        "Saved file contains only the masked content",
-        "pnpm check passes"
-      ],
-      "priority": 16,
-      "passes": true,
-      "notes": ""
-    },
-    {
-      "id": "US-017",
-      "title": "Export: batch zip archive",
-      "description": "As a user, I want to export all vault items as a zip so I can share a batch of redacted files.",
-      "acceptanceCriteria": [
-        "An 'Export All' button is visible in the file list sidebar header",
-        "Clicking it loads full masked content for all items via get_item, then calls export_zip Tauri command",
-        "Native save dialog opens for a .zip file",
-        "Zip contains one file per vault item named [name]_masked.[ext]",
-        "Zip does NOT contain original values or entity mappings",
-        "pnpm check passes"
-      ],
-      "priority": 17,
-      "passes": true,
-      "notes": ""
-    },
-    {
-      "id": "US-018",
-      "title": "Delete vault items",
-      "description": "As a user, I want to delete files from my vault so I can manage my stored data.",
-      "acceptanceCriteria": [
-        "A delete button (trash icon or text) is visible per item in the file list",
-        "Clicking it shows a confirmation dialog: 'Delete [filename]? This cannot be undone.'",
-        "On confirmation, calls delete_item Tauri command with the item id",
-        "File list refreshes immediately after deletion",
-        "If the deleted item was selected, the content viewer resets to the empty/placeholder state",
-        "pnpm check passes",
-        "Verify in browser using dev tools"
-      ],
-      "priority": 18,
-      "passes": true,
-      "notes": ""
+      "passes": false,
+      "notes": "raw_pdf_bytes comes from the get_item response. It may need to be base64-decoded on the frontend before passing back to Rust as an array."
     }
   ]
 }
