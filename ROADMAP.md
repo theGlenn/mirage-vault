@@ -101,7 +101,7 @@ The desktop Vault app is the centerpiece. It removes all browser extension const
 |----------|----------|-------|
 | Frontend framework | **Svelte 5** | Already scaffolded in `aether-vault/` |
 | Storage engine | **SQLite** (`rusqlite`) | Relational queries for cross-file entity search, mature ecosystem |
-| PDF parsing | **Deferred to Phase 1b** | Rust-side (`lopdf`) when implemented. Phase 1 ships with text formats only. |
+| PDF parsing | **`lopdf`** (Rust, pure) | Pure Rust, actively maintained (v0.39.0), has `extract_text()` + `replace_text()` for future masked PDF output. Fallback: `pdfium-render` if extraction quality is insufficient (requires bundling ~20MB PDFium binary per platform). |
 | Encryption at rest | **App-level AES-256-GCM** via Rust `ring` | Per-field encryption of sensitive columns. Key from user passphrase via Argon2. |
 
 ### Upcoming: Phase 1 deferred work
@@ -194,11 +194,11 @@ For the Vault app (not the extension), we can use a local LLM to improve entity 
 - Direct text processing. Straightforward.
 - For `.csv` and `.json`: parse structure, mask values only (preserve keys/headers).
 
-**Phase 1b milestone: PDF support** (post core vault loop):
-- Deferred from Phase 1 to reduce scope. Implement once the core ingest → detect → mask → browse → export loop is validated with text-based formats.
-- Recommended approach: Rust-side extraction via `lopdf` / `pdf-extract` in the Tauri backend, sending extracted text to the frontend for masking.
-- Extract text layer from native PDFs. Image-based PDFs (scanned documents) require OCR and are out of scope.
-- Export: start with `.txt` export of masked content. Masked PDF output is a stretch goal.
+**Phase 1b milestone: PDF support** (NOW — core vault loop validated):
+- **Crate:** `lopdf` (pure Rust, v0.39.0, ~2400 dependents). Tentative upgrade path: `pdfium-render` (Chromium's PDF engine) if `lopdf` extraction quality proves insufficient on real-world PDFs.
+- Rust backend extracts text layer via `lopdf::Document::extract_text()`, sends extracted text to frontend for detection and masking.
+- Extract text layer from native PDFs only. Image-based PDFs (scanned documents) require OCR and remain out of scope.
+- Export: masked content exported as `.txt`. Masked PDF output (using `lopdf::Document::replace_text()`) is a stretch goal.
 
 **Future formats** (post Phase 1b):
 - `.docx`: Extract text via `mammoth` or similar, mask, reconstruct.
