@@ -3,8 +3,8 @@
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
   import { open } from '@tauri-apps/plugin-dialog';
   import { onMount } from 'svelte';
-  import { detect } from '$lib/detectors';
-  import { mask } from '$lib/masker';
+  import { maskWithStrategy, getCurrentStrategyInfo } from '$lib/masking';
+  import MaskingStrategyConfig from '$lib/components/MaskingStrategyConfig.svelte';
 
   const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.csv', '.json', '.pdf'];
 
@@ -195,13 +195,14 @@
   async function ingestFilePath(path: string, name: string) {
     const ext = getExtension(name).replace('.', '');
     const text = await invoke<string>('read_file_text', { path });
-    const detections = detect(text);
-    const result = mask(text, detections);
-
+    
+    // Use configured masking strategy (NLP or Ollama)
+    const result = await maskWithStrategy(text);
+    
     const entities = result.mappings.map((m) => ({
       entity_type: m.type,
       original_value: m.original,
-      token: m.token,
+      token: m.token || m.hash || '[MASKED]',
       span_start: m.start,
       span_end: m.end
     }));
@@ -220,13 +221,13 @@
 
     const pdfResult = await invoke<PdfExtractResult>('extract_pdf_text', { content: bytes });
 
-    const detections = detect(pdfResult.text);
-    const result = mask(pdfResult.text, detections);
+    // Use configured masking strategy (NLP or Ollama)
+    const result = await maskWithStrategy(pdfResult.text);
 
     const entities = result.mappings.map((m) => ({
       entity_type: m.type,
       original_value: m.original,
-      token: m.token,
+      token: m.token || m.hash || '[MASKED]',
       span_start: m.start,
       span_end: m.end
     }));
@@ -274,12 +275,12 @@
       const pad = (n: number) => String(n).padStart(2, '0');
       const name = `Pasted text - ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
 
-      const detections = detect(text);
-      const result = mask(text, detections);
+      // Use configured masking strategy (NLP or Ollama)
+      const result = await maskWithStrategy(text);
       const entities = result.mappings.map((m) => ({
         entity_type: m.type,
         original_value: m.original,
-        token: m.token,
+        token: m.token || m.hash || '[MASKED]',
         span_start: m.start,
         span_end: m.end
       }));
@@ -654,6 +655,16 @@
       {:else}
         <p class="empty-state">No file selected</p>
       {/if}
+    </div>
+    
+    <!-- Masking Strategy Configuration -->
+    <div class="sidebar-section">
+      <div class="sidebar-header">
+        <h2>Masking Strategy</h2>
+      </div>
+      <div class="sidebar-content">
+        <MaskingStrategyConfig />
+      </div>
     </div>
   </aside>
 </div>
