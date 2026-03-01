@@ -1,3 +1,4 @@
+use crate::crypto;
 use crate::db::DbState;
 use serde::{Deserialize, Serialize};
 use std::io::{Cursor, Write};
@@ -48,6 +49,23 @@ pub struct ItemDetail {
     pub entities: Vec<EntityOutput>,
 }
 
+// --- Key Management Commands ---
+
+#[tauri::command]
+pub fn init_encryption(passphrase: String) -> Result<(), String> {
+    crypto::init_with_passphrase(&passphrase)
+}
+
+#[tauri::command]
+pub fn is_encryption_initialized() -> bool {
+    crypto::is_key_set()
+}
+
+#[tauri::command]
+pub fn clear_encryption_key() {
+    crypto::clear_key();
+}
+
 // --- Commands ---
 
 #[tauri::command]
@@ -63,9 +81,17 @@ pub fn save_item(
 ) -> Result<i64, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
 
+    // Encrypt raw content before storing
+    let encrypted_content = if crypto::is_key_set() {
+        crypto::encrypt(&raw_content)?
+    } else {
+        // If encryption not initialized, store as plaintext (for development)
+        raw_content
+    };
+
     conn.execute(
         "INSERT INTO items (name, file_type, raw_content, masked_content, warning, raw_pdf_bytes) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        rusqlite::params![name, file_type, raw_content, masked_content, warning, raw_pdf_bytes],
+        rusqlite::params![name, file_type, encrypted_content, masked_content, warning, raw_pdf_bytes],
     )
     .map_err(|e| e.to_string())?;
 
@@ -133,11 +159,20 @@ pub fn get_item(db: State<'_, DbState>, item_id: i64) -> Result<ItemDetail, Stri
             "SELECT id, name, file_type, raw_content, masked_content, created_at, warning, raw_pdf_bytes FROM items WHERE id = ?1",
             rusqlite::params![item_id],
             |row| {
+                let encrypted_content: String = row.get(3)?;
+                
+                // Decrypt raw content if encryption is initialized
+                let raw_content = if crypto::is_key_set() {
+                    crypto::decrypt(&encrypted_content).unwrap_or_else(|_| encrypted_content)
+                } else {
+                    encrypted_content
+                };
+                
                 Ok(ItemDetail {
                     id: row.get(0)?,
                     name: row.get(1)?,
                     file_type: row.get(2)?,
-                    raw_content: row.get(3)?,
+                    raw_content,
                     masked_content: row.get(4)?,
                     created_at: row.get(5)?,
                     warning: row.get(6)?,
