@@ -143,9 +143,20 @@
     return segments.length ? segments : [{ text }];
   }
 
+  function dedupeEntities(entities: EntityDetail[]): EntityDetail[] {
+    const byKey = new Map<string, EntityDetail>();
+    for (const entity of entities) {
+      const key = `${entity.span_start}:${entity.span_end}:${entity.original_value.trim().toLowerCase()}`;
+      if (!byKey.has(key)) {
+        byKey.set(key, entity);
+      }
+    }
+    return Array.from(byKey.values()).sort((a, b) => a.span_start - b.span_start || a.span_end - b.span_end);
+  }
+
   function buildHighlightedSegments(text: string, entities: EntityDetail[]): TextSegment[] {
     if (!entities.length) return [{ text }];
-    const sorted = [...entities].sort((a, b) => a.span_start - b.span_start);
+    const sorted = dedupeEntities(entities);
     const segments: TextSegment[] = [];
     let pos = 0;
     for (const entity of sorted) {

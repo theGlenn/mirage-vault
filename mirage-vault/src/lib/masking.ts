@@ -41,9 +41,138 @@ const OLLAMA_TYPE_ALIASES: Record<string, string> = {
   COMPANY: 'ORG',
 };
 
+const ENTITY_TYPE_PRIORITY = [
+  'EMAIL',
+  'PHONE',
+  'API_KEY',
+  'PERSON',
+  'ORG',
+  'AMT',
+  'DATE',
+  'LOCATION',
+  'ADDRESS',
+  'SSN',
+  'CARD',
+  'PII',
+] as const;
+
 function normalizeEntityType(type: string): string {
   const normalized = type.trim().toUpperCase();
   return OLLAMA_TYPE_ALIASES[normalized] ?? normalized;
+}
+
+type UnifiedMapping = UnifiedMaskResult['mappings'][number];
+
+function getEntityTypeScore(type: string): number {
+  const normalized = normalizeEntityType(type);
+  const idx = ENTITY_TYPE_PRIORITY.indexOf(normalized as (typeof ENTITY_TYPE_PRIORITY)[number]);
+  return idx === -1 ? ENTITY_TYPE_PRIORITY.length : idx;
+}
+
+function chooseBetterMapping(current: UnifiedMapping, candidate: UnifiedMapping): UnifiedMapping {
+  const currentScore = getEntityTypeScore(current.type);
+  const candidateScore = getEntityTypeScore(candidate.type);
+  if (candidateScore < currentScore) {
+    return candidate;
+  }
+  if (candidateScore > currentScore) {
+    return current;
+  }
+
+  const currentTokenWeight = current.token ? 1 : 0;
+  const candidateTokenWeight = candidate.token ? 1 : 0;
+  if (candidateTokenWeight > currentTokenWeight) {
+    return candidate;
+  }
+
+  const currentHashWeight = current.hash ? 1 : 0;
+  const candidateHashWeight = candidate.hash ? 1 : 0;
+  if (candidateHashWeight > currentHashWeight) {
+    return candidate;
+  }
+
+  return current;
+}
+
+function getOriginalKey(original: string): string {
+  return original.trim().toLowerCase();
+}
+
+function dedupeOllamaMappings(
+  mappings: UnifiedMaskResult['mappings']
+): UnifiedMaskResult['mappings'] {
+  if (mappings.length === 0) {
+    return mappings;
+  }
+
+  const prepared: UnifiedMapping[] = mappings.map((mapping) => {
+    const type = normalizeEntityType(mapping.type);
+    const hash = mapping.hash?.toLowerCase();
+    return {
+      ...mapping,
+      hash,
+      type,
+      token: hash ? `[[${type}:${hash}]]` : mapping.token,
+    };
+  });
+
+  // Force a single canonical type per original value.
+  const canonicalTypeByOriginal = new Map<string, string>();
+  for (const mapping of prepared) {
+    const key = getOriginalKey(mapping.original);
+    const currentType = canonicalTypeByOriginal.get(key);
+    if (!currentType || getEntityTypeScore(mapping.type) < getEntityTypeScore(currentType)) {
+      canonicalTypeByOriginal.set(key, mapping.type);
+    }
+  }
+
+  const harmonized = prepared.map((mapping) => {
+    const canonicalType = canonicalTypeByOriginal.get(getOriginalKey(mapping.original)) ?? mapping.type;
+    const hash = mapping.hash;
+    return {
+      ...mapping,
+      type: canonicalType,
+      token: hash ? `[[${canonicalType}:${hash}]]` : mapping.token,
+    };
+  });
+
+  // Remove duplicates that target the same exact text range/value.
+  const bySpan = new Map<string, UnifiedMapping>();
+  for (const mapping of harmonized) {
+    const hasValidSpan = mapping.end > mapping.start;
+    const spanKey = hasValidSpan
+      ? `span:${mapping.start}:${mapping.end}:${getOriginalKey(mapping.original)}`
+      : `value:${getOriginalKey(mapping.original)}`;
+    const existing = bySpan.get(spanKey);
+    if (!existing) {
+      bySpan.set(spanKey, mapping);
+      continue;
+    }
+    bySpan.set(spanKey, chooseBetterMapping(existing, mapping));
+  }
+
+  return Array.from(bySpan.values()).sort(
+    (a, b) => a.start - b.start || a.end - b.end || a.original.localeCompare(b.original)
+  );
+}
+
+function normalizeMaskedTextTypes(maskedText: string, mappings: UnifiedMaskResult['mappings']): string {
+  const typeByHash = new Map<string, string>();
+  for (const mapping of mappings) {
+    if (mapping.hash) {
+      typeByHash.set(mapping.hash.toLowerCase(), mapping.type);
+    }
+  }
+
+  if (typeByHash.size === 0) {
+    return maskedText;
+  }
+
+  return maskedText.replace(/\[\[([A-Z_]+):([A-Za-z0-9]+)\]\]/g, (fullToken, _type, rawHash) => {
+    const hash = String(rawHash).toLowerCase();
+    const canonicalType = typeByHash.get(hash);
+    return canonicalType ? `[[${canonicalType}:${hash}]]` : fullToken;
+  });
 }
 
 interface MaskTokenMatch {
@@ -242,10 +371,13 @@ async function maskWithOllama(
     typesByHash = extractEntityTypesByHash(maskedText);
   }
 
-  const mappings = buildOllamaMappings(text, maskedText, originalsByHash);
+  const mappings = dedupeOllamaMappings(
+    buildOllamaMappings(text, maskedText, originalsByHash)
+  );
+  const normalizedMaskedText = normalizeMaskedTextTypes(maskedText, mappings);
   
   return {
-    maskedText,
+    maskedText: normalizedMaskedText,
     mappings,
     strategy: 'ollama',
     timing: {
