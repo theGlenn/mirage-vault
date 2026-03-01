@@ -1,4 +1,4 @@
-export type UploadStage = 'drag' | 'reading' | 'saving' | 'processing' | 'done' | 'error';
+export type UploadStage = 'drag' | 'reading' | 'parsing' | 'saving' | 'processing' | 'done' | 'error';
 
 export interface UploadProgress {
   /** Client-generated ID for tracking before DB assignment */
@@ -11,7 +11,7 @@ export interface UploadProgress {
   fileType: string;
   /** Current pipeline stage */
   stage: UploadStage;
-  /** Progress bar percentage: 0 | 25 | 50 | 75 | 100 */
+  /** Progress bar percentage: 0 | 20 | 40 | 60 | 80 | 100 */
   progress: number;
   /** DB item ID, assigned at saving stage. null before that. */
   itemId: number | null;
@@ -27,13 +27,16 @@ export interface UploadProgress {
   startedAt: number;
   /** Whether this is a paste operation (no filesystem read) */
   isPaste: boolean;
+  /** Timestamp of the last stage transition (for timing logs) */
+  lastStageAt: number;
 }
 
 export const STAGE_PROGRESS: Record<UploadStage, number> = {
   drag: 0,
-  reading: 25,
-  saving: 50,
-  processing: 75,
+  reading: 20,
+  parsing: 40,
+  saving: 60,
+  processing: 80,
   done: 100,
   error: -1,
 };

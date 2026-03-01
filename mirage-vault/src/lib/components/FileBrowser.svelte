@@ -81,7 +81,6 @@
       <PixelIcon name="upload" size={48} />
     </div>
     {#if isAnyUploading}
-      <div class="loading-spinner"></div>
       <p class="drop-zone-text">Processing files...</p>
     {:else}
       <p class="drop-zone-text">Drop .txt .md .csv .json or .pdf files here</p>
@@ -160,20 +159,10 @@
         </div>
       </div>
     {/if}
-    {#if isAnyUploading}
-      <div class="processing-overlay">
-        <div class="loading-spinner"></div>
-        <p class="processing-text">
-          Processing {Array.from(uploadStates.values()).filter(u => u.stage !== 'done' && u.stage !== 'error').length} file(s)...
-        </p>
-      </div>
-    {/if}
     <div class="file-grid">
       {#each pendingUploads as upload (upload.trackingId)}
         <div class="file-card file-card-pending">
-          <div class="file-card-spinner">
-            <div class="card-loading-spinner"></div>
-          </div>
+          <div class="file-card-stage-badge">{upload.stage}</div>
           <div class="file-card-icon" style="color: {getFileTypeColor(upload.fileType)}">
             <PixelIcon name={getFileIcon(upload.fileType)} size={32} />
           </div>
@@ -315,20 +304,6 @@
   border-color: var(--accent-orange);
 }
 
-/* Loading spinner */
-.loading-spinner {
-  width: 32px;
-  height: 32px;
-  border: 3px solid var(--border);
-  border-top-color: var(--accent-orange);
-  border-radius: 50%;
-  animation: spin 0.8s steps(8) infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
 /* File browser (grid state) */
 .file-browser {
   width: 100%;
@@ -435,22 +410,6 @@
   padding-bottom: 60px;
 }
 
-.processing-overlay {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 12px;
-  background: var(--bg-elevated);
-  border-bottom: 1px solid var(--border);
-}
-
-.processing-text {
-  margin: 0;
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
 .grid-error {
   margin: 0;
   padding: 12px 20px;
@@ -459,6 +418,7 @@
 }
 
 /* Pending upload ghost cards */
+
 .file-card-pending {
   position: relative;
   display: flex;
@@ -478,19 +438,19 @@
   box-sizing: border-box;
 }
 
-.file-card-pending .file-card-spinner {
+.file-card-pending .file-card-stage-badge {
   position: absolute;
   top: 8px;
   right: 8px;
-}
-
-.file-card-pending .card-loading-spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--border);
-  border-top-color: var(--accent-orange);
-  border-radius: 50%;
-  animation: spin 0.8s steps(8) infinite;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: capitalize;
+  color: var(--accent-orange);
+  background: rgba(232, 117, 26, 0.12);
+  border: 1px solid var(--accent-orange);
+  border-radius: 4px;
+  letter-spacing: 0.02em;
 }
 
 .file-card-pending .file-card-icon {
@@ -540,7 +500,7 @@
   bottom: 0;
   left: 0;
   right: 0;
-  height: 3px;
+  height: 5px;
   background: var(--bg-elevated);
   border-radius: 0 0 6px 6px;
   overflow: hidden;

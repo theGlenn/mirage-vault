@@ -88,6 +88,21 @@
     if (updates.stage && updates.stage !== 'error' && updates.progress === undefined) {
       updated.progress = STAGE_PROGRESS[updates.stage];
     }
+    // Log stage transitions with timing
+    if (updates.stage && updates.stage !== current.stage) {
+      const now = Date.now();
+      const totalElapsed = now - current.startedAt;
+      const stageElapsed = now - current.lastStageAt;
+      logger.info(`Stage transition: ${current.stage} → ${updates.stage}`, {
+        trackingId,
+        file: current.fileName,
+        stage: updates.stage,
+        previousStage: current.stage,
+        stageDurationMs: stageElapsed,
+        totalElapsedMs: totalElapsed,
+      });
+      updated.lastStageAt = now;
+    }
     const next = new Map(uploadStates);
     next.set(trackingId, updated);
     uploadStates = next;
@@ -106,6 +121,7 @@
     isPaste?: boolean;
   }): string {
     const trackingId = generateTrackingId();
+    const now = Date.now();
     const entry: UploadProgress = {
       trackingId,
       filePath: opts.filePath,
@@ -118,9 +134,15 @@
       errorStage: null,
       rawContent: null,
       rawPdfBytes: null,
-      startedAt: Date.now(),
+      startedAt: now,
       isPaste: opts.isPaste ?? false,
+      lastStageAt: now,
     };
+    logger.info(`Upload created at stage: drag`, {
+      trackingId,
+      file: opts.fileName,
+      stage: 'drag',
+    });
     const next = new Map(uploadStates);
     next.set(trackingId, entry);
     uploadStates = next;
@@ -191,7 +213,12 @@
     updateUploadState(trackingId, { stage: 'reading' });
     logger.info('Reading file', { trackingId, file: name, stage: 'reading' });
     const text = await invoke<string>('read_file_text', { path });
-    updateUploadState(trackingId, { rawContent: text });
+
+    // Stage: parsing (validate/prepare content)
+    updateUploadState(trackingId, { stage: 'parsing', rawContent: text });
+    logger.info('Parsing file', { trackingId, file: name, stage: 'parsing' });
+    // For text files, parsing is lightweight — content is ready as-is
+    // This stage exists so the user sees the pipeline moving
 
     // Stage: saving (phase 1 — save raw with status 'processing')
     updateUploadState(trackingId, { stage: 'saving' });
@@ -214,10 +241,14 @@
   // --- Staged ingest: PDF files ---
 
   async function ingestPdfFilePath(path: string, name: string, trackingId: string) {
-    // Stage: reading
+    // Stage: reading (raw bytes from disk)
     updateUploadState(trackingId, { stage: 'reading' });
-    logger.info('Reading PDF', { trackingId, file: name, stage: 'reading' });
+    logger.info('Reading PDF bytes', { trackingId, file: name, stage: 'reading' });
     const bytes = await invoke<number[]>('read_file_bytes', { path });
+
+    // Stage: parsing (extract text from PDF)
+    updateUploadState(trackingId, { stage: 'parsing' });
+    logger.info('Parsing PDF', { trackingId, file: name, stage: 'parsing' });
     const pdfResult = await invoke<PdfExtractResult>('extract_pdf_text', { content: bytes });
     updateUploadState(trackingId, { rawContent: pdfResult.text, rawPdfBytes: bytes });
 
@@ -261,7 +292,9 @@
 
     // Done
     updateUploadState(trackingId, { stage: 'done' });
-    logger.info('Upload complete', { trackingId, file: name, stage: 'done', itemId });
+    const upload = uploadStates.get(trackingId);
+    const totalMs = upload ? Date.now() - upload.startedAt : 0;
+    logger.info(`Upload complete — total pipeline: ${totalMs}ms`, { trackingId, file: name, stage: 'done', itemId, totalElapsedMs: totalMs });
     await refreshItems();
 
     // Re-fetch selected item if it was this one
@@ -317,9 +350,12 @@
     });
 
     try {
-      // Paste skips reading stage — go straight to saving
-      updateUploadState(trackingId, { stage: 'saving', rawContent: text });
-      logger.info('Saving pasted text', { trackingId, file: name, stage: 'saving' });
+      // Paste skips reading stage — go straight to parsing
+      updateUploadState(trackingId, { stage: 'parsing', rawContent: text });
+      logger.info('Parsing pasted text', { trackingId, file: name, stage: 'parsing' });
+
+      // Stage: saving
+      updateUploadState(trackingId, { stage: 'saving' });
 
       const itemId = await invoke<number>('save_item', {
         name,
@@ -648,8 +684,9 @@
 
     logger.info('Retrying upload', { trackingId, file: upload.fileName, stage: upload.errorStage ?? 'unknown' });
 
-    // Clear error state
-    updateUploadState(trackingId, { stage: 'reading', error: null, errorStage: null });
+    // Clear error state and reset timing for retry
+    const now = Date.now();
+    updateUploadState(trackingId, { stage: 'reading', error: null, errorStage: null, startedAt: now, lastStageAt: now });
 
     try {
       if (upload.itemId != null && upload.rawContent != null) {
@@ -710,7 +747,9 @@
     let unlisten: (() => void) | undefined;
 
     webview.onDragDropEvent(async (event) => {
-      logger.debug('Drag-drop event', { stage: event.payload.type });
+      if (event.payload.type !== 'over') {
+        logger.debug('Drag-drop event', { stage: event.payload.type });
+      }
       if (event.payload.type === 'enter') {
         dragOver = true;
       } else if (event.payload.type === 'leave') {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import PixelIcon from './PixelIcon.svelte';
   import type { IconName } from './PixelIcon.svelte';
   import type { UploadProgress } from '$lib/types/upload';
@@ -29,7 +30,13 @@
   let isProcessing = $derived(
     uploadProgress?.stage === 'processing' ||
     uploadProgress?.stage === 'reading' ||
+    uploadProgress?.stage === 'parsing' ||
     uploadProgress?.stage === 'saving'
+  );
+
+  let isLlmProcessing = $derived(
+    uploadProgress?.stage === 'processing' ||
+    (!uploadProgress && item.status === 'processing')
   );
 
   let isError = $derived(uploadProgress?.stage === 'error');
@@ -38,6 +45,72 @@
     (uploadProgress != null && uploadProgress.stage !== 'done') ||
     item.status === 'processing'
   );
+
+  // --- Rotating processing messages ---
+  const PROCESSING_HINTS: { text: string; icon: IconName }[] = [
+    { text: 'Hiding your data from the bad guys', icon: 'shield' },
+    { text: "They'll never catch you", icon: 'zap' },
+    { text: 'Keepin\' your data safe!', icon: 'lock' },
+    { text: 'Scrambling the evidence...', icon: 'eye' },
+    { text: 'Your secrets are safe with us', icon: 'unlock' },
+    { text: 'Making you invisible', icon: 'shield' },
+    { text: 'Cloaking in progress...', icon: 'zap' },
+    { text: 'Nothing to see here, officer', icon: 'eye' },
+  ];
+
+  let hintIndex = $state(Math.floor(Math.random() * PROCESSING_HINTS.length));
+  let hintInterval: ReturnType<typeof setInterval> | undefined;
+
+  $effect(() => {
+    if (isLlmProcessing) {
+      hintIndex = Math.floor(Math.random() * PROCESSING_HINTS.length);
+      hintInterval = setInterval(() => {
+        let next: number;
+        do {
+          next = Math.floor(Math.random() * PROCESSING_HINTS.length);
+        } while (next === hintIndex && PROCESSING_HINTS.length > 1);
+        hintIndex = next;
+      }, 4000);
+    } else {
+      if (hintInterval) clearInterval(hintInterval);
+      hintInterval = undefined;
+    }
+  });
+
+  onDestroy(() => {
+    if (hintInterval) clearInterval(hintInterval);
+  });
+
+  let currentHint = $derived(PROCESSING_HINTS[hintIndex]);
+
+  // --- Typewriter effect ---
+  let displayedText = $state('');
+  let typewriterTimeout: ReturnType<typeof setTimeout> | undefined;
+
+  $effect(() => {
+    const text = currentHint.text;
+    // Clear previous typewriter
+    if (typewriterTimeout) clearTimeout(typewriterTimeout);
+    displayedText = '';
+
+    if (!isLlmProcessing) return;
+
+    let i = 0;
+    function typeNext() {
+      if (i < text.length) {
+        displayedText = text.slice(0, i + 1);
+        i++;
+        typewriterTimeout = setTimeout(typeNext, 35);
+      }
+    }
+    typewriterTimeout = setTimeout(typeNext, 35);
+  });
+
+  onDestroy(() => {
+    if (typewriterTimeout) clearTimeout(typewriterTimeout);
+  });
+
+  let typingDone = $derived(displayedText.length >= currentHint.text.length);
 
   function getFileIcon(fileType: string): IconName {
     switch (fileType) {
@@ -92,9 +165,7 @@
   onclick={handleClick}
 >
   {#if isProcessing || item.status === 'processing'}
-    <div class="file-card-spinner">
-      <div class="card-loading-spinner"></div>
-    </div>
+    <div class="file-card-stage-badge">{uploadProgress?.stage ?? 'processing'}</div>
   {:else if isError}
     <div class="file-card-error-icon">
       <PixelIcon name="alert" size={16} />
@@ -105,8 +176,11 @@
     </button>
   {/if}
 
-  <div class="file-card-icon" style="color: {getFileTypeColor(item.file_type)}">
-    <PixelIcon name={getFileIcon(item.file_type)} size={32} />
+  <div class="file-card-icon-row">
+    <div class="file-card-icon" style="color: {getFileTypeColor(item.file_type)}">
+      <PixelIcon name={getFileIcon(item.file_type)} size={32} />
+    </div>
+    <span class="file-card-type">.{item.file_type}</span>
   </div>
   <div class="file-card-name">
     {#if item.warning}
@@ -115,14 +189,18 @@
     <span class="file-card-name-text">{item.name}</span>
   </div>
   <div class="file-card-meta">
-    {#if isProcessing || item.status === 'processing'}
-      <span class="file-card-stage">{uploadProgress?.stage ?? 'processing'}...</span>
+    {#if isLlmProcessing}
+      <span class="file-card-hint-meta">
+        <PixelIcon name={currentHint.icon} size={22} />
+        <span>{displayedText}{#if typingDone}<span class="animated-dots"></span>{/if}</span>
+      </span>
+    {:else if isProcessing || item.status === 'processing'}
+      <span class="file-card-stage">{uploadProgress?.stage ?? 'processing'}<span class="animated-dots"></span></span>
     {:else if isError}
       <span class="file-card-error-text">Error</span>
     {:else}
       <span class="file-card-entities">{item.entity_count} entities</span>
     {/if}
-    <span class="file-card-type">.{item.file_type}</span>
   </div>
 
   {#if !isError && !isProcessing && item.status === 'done'}
@@ -206,23 +284,19 @@
   background: var(--bg-surface);
 }
 
-.file-card-spinner {
+.file-card-stage-badge {
   position: absolute;
   top: 8px;
   right: 8px;
-}
-
-.card-loading-spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--border);
-  border-top-color: var(--accent-orange);
-  border-radius: 50%;
-  animation: card-spin 0.8s steps(8) infinite;
-}
-
-@keyframes card-spin {
-  to { transform: rotate(360deg); }
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: capitalize;
+  color: var(--accent-orange);
+  background: rgba(232, 117, 26, 0.12);
+  border: 1px solid var(--accent-orange);
+  border-radius: 4px;
+  letter-spacing: 0.02em;
 }
 
 .file-card-error-icon {
@@ -245,8 +319,36 @@
   text-transform: capitalize;
 }
 
+.file-card-icon-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .file-card-icon {
   color: var(--text-secondary);
+}
+
+.file-card-hint-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent-orange);
+  font-weight: 500;
+  font-size: 12px;
+}
+
+.animated-dots::after {
+  content: '';
+  animation: dots 1.5s steps(4, end) infinite;
+}
+
+@keyframes dots {
+  0% { content: ''; }
+  25% { content: '.'; }
+  50% { content: '..'; }
+  75% { content: '...'; }
+  100% { content: ''; }
 }
 
 .file-card-name {
@@ -296,7 +398,7 @@
   bottom: 0;
   left: 0;
   right: 0;
-  height: 3px;
+  height: 5px;
   background: var(--bg-elevated);
   border-radius: 0 0 6px 6px;
   overflow: hidden;
