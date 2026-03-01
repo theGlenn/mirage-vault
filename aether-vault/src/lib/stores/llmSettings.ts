@@ -10,7 +10,7 @@ export interface LlmSettings {
 const DEFAULT_SETTINGS: LlmSettings = {
   enabled: false,
   baseUrl: 'http://localhost:11434',
-  model: 'phi3:mini',
+  model: 'ministral',
   timeoutMs: 30000,
 };
 
