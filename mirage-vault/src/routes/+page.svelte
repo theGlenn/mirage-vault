@@ -3,7 +3,6 @@
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
   import { open } from '@tauri-apps/plugin-dialog';
   import { onMount } from 'svelte';
-  import { detect } from '$lib/detectors';
   import { mask } from '$lib/masker';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import type { ActiveView } from '$lib/components/Sidebar.svelte';
@@ -16,8 +15,10 @@
   import SettingsScreen from '$lib/components/SettingsScreen.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import { maskWithStrategy } from '$lib/masking';
+  import { BASE_ENTITY_TYPE_ORDER } from '$lib/entityColors';
 
   const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.csv', '.json', '.pdf'];
+  const BUILTIN_ENTITY_TYPES: string[] = [...BASE_ENTITY_TYPE_ORDER];
 
   let activeView: ActiveView = $state('browse');
   let items: VaultItem[] = $state([]);
@@ -38,6 +39,41 @@
       ? items.filter(item => item.name.toLowerCase().includes(searchQuery.toLowerCase()))
       : items
   );
+
+  function showToast(message: string) {
+    if (toastTimeout) clearTimeout(toastTimeout);
+    toastMessage = message;
+    toastTimeout = setTimeout(() => { toastMessage = ''; }, 2000);
+  }
+
+  function normalizeEntityTypeName(type: string): string {
+    return type
+      .trim()
+      .toUpperCase()
+      .replace(/[\s-]+/g, '_')
+      .replace(/[^A-Z0-9_]/g, '');
+  }
+
+  function findAllOccurrences(text: string, value: string): Array<{ start: number; end: number }> {
+    if (!value) return [];
+    const ranges: Array<{ start: number; end: number }> = [];
+    let startIndex = 0;
+    while (startIndex <= text.length - value.length) {
+      const idx = text.indexOf(value, startIndex);
+      if (idx === -1) break;
+      ranges.push({ start: idx, end: idx + value.length });
+      startIndex = idx + value.length;
+    }
+    return ranges;
+  }
+
+  interface EntityInput {
+    entity_type: string;
+    original_value: string;
+    token: string;
+    span_start: number;
+    span_end: number;
+  }
 
   
   async function selectItem(id: number) {
@@ -248,12 +284,79 @@
     }
   }
 
+  async function addCustomEntity(payload: { entityType: string; value: string }) {
+    if (!selectedItem) return;
+
+    const itemId = selectedItem.id;
+    const entityType = normalizeEntityTypeName(payload.entityType);
+    const value = payload.value.trim();
+    if (!value) return;
+    if (!entityType) {
+      showToast('Invalid entity type');
+      return;
+    }
+
+    const occurrences = findAllOccurrences(selectedItem.raw_content, value);
+    if (occurrences.length === 0) {
+      showToast('Value not found in this document');
+      return;
+    }
+
+    const existingDetections = selectedItem.entities
+      .map((entity) => ({
+        type: normalizeEntityTypeName(entity.entity_type),
+        value: entity.original_value,
+        start: entity.span_start,
+        end: entity.span_end
+      }))
+      .filter((entity) => entity.type.length > 0);
+
+    const customDetections = occurrences
+      .map((occurrence) => ({
+        type: entityType,
+        value,
+        start: occurrence.start,
+        end: occurrence.end
+      }));
+
+    const remainingDetections = existingDetections.filter((detection) => {
+      return !customDetections.some(
+        (custom) => detection.start < custom.end && detection.end > custom.start
+      );
+    });
+
+    const remasked = mask(selectedItem.raw_content, [...remainingDetections, ...customDetections]);
+    const entities: EntityInput[] = remasked.mappings.map((mapping) => ({
+      entity_type: mapping.type,
+      original_value: mapping.original,
+      token: mapping.token || mapping.hash || '[MASKED]',
+      span_start: mapping.start,
+      span_end: mapping.end
+    }));
+
+    try {
+      await invoke('update_item_masking', {
+        itemId,
+        maskedContent: remasked.maskedText,
+        entities
+      });
+
+      selectedItem = await invoke<ItemDetail>('get_item', { itemId });
+      await refreshItems();
+      showToast(
+        customDetections.length === 1
+          ? 'Custom entity added'
+          : `${customDetections.length} custom entities added`
+      );
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to add custom entity');
+    }
+  }
+
   async function copyMaskedText() {
     if (!selectedItem) return;
     await navigator.clipboard.writeText(selectedItem.masked_content);
-    if (toastTimeout) clearTimeout(toastTimeout);
-    toastMessage = 'Copied to clipboard';
-    toastTimeout = setTimeout(() => { toastMessage = ''; }, 2000);
+    showToast('Copied to clipboard');
   }
 
   async function exportFile() {
@@ -287,20 +390,89 @@
         fileName: selectedItem.name
       });
       if (result) {
-        if (toastTimeout) clearTimeout(toastTimeout);
-        toastMessage = 'Masked PDF exported';
-        toastTimeout = setTimeout(() => { toastMessage = ''; }, 2000);
+        showToast('Masked PDF exported');
       }
     } catch {
-      if (toastTimeout) clearTimeout(toastTimeout);
-      toastMessage = 'PDF export failed — falling back to text export';
-      toastTimeout = setTimeout(() => { toastMessage = ''; }, 2000);
+      showToast('PDF export failed — falling back to text export');
       await exportFile();
     }
   }
 
   let confirmDeleteItem: VaultItem | null = $state(null);
+  let confirmDeleteCustomType: string | null = $state(null);
   let exportingAll = $state(false);
+
+  function requestDeleteCustomEntityType(entityType: string) {
+    const normalizedType = normalizeEntityTypeName(entityType);
+    if (!normalizedType) return;
+    if (BUILTIN_ENTITY_TYPES.includes(normalizedType)) {
+      showToast('Built-in entity types cannot be deleted');
+      return;
+    }
+    confirmDeleteCustomType = normalizedType;
+  }
+
+  async function removeCustomEntityType(entityType: string) {
+    if (!selectedItem) {
+      confirmDeleteCustomType = null;
+      return;
+    }
+
+    const normalizedType = normalizeEntityTypeName(entityType);
+    if (!normalizedType) {
+      confirmDeleteCustomType = null;
+      return;
+    }
+    if (BUILTIN_ENTITY_TYPES.includes(normalizedType)) {
+      showToast('Built-in entity types cannot be deleted');
+      confirmDeleteCustomType = null;
+      return;
+    }
+
+    const itemId = selectedItem.id;
+    const currentEntities = selectedItem.entities.map((entity) => ({
+      type: normalizeEntityTypeName(entity.entity_type),
+      value: entity.original_value,
+      start: entity.span_start,
+      end: entity.span_end
+    }));
+
+    const remainingDetections = currentEntities.filter(
+      (entity) => entity.type.length > 0 && entity.type !== normalizedType
+    );
+    const removedCount = currentEntities.length - remainingDetections.length;
+
+    if (removedCount === 0) {
+      showToast(`No entities found for type ${normalizedType}`);
+      confirmDeleteCustomType = null;
+      return;
+    }
+
+    const remasked = mask(selectedItem.raw_content, remainingDetections);
+    const entities: EntityInput[] = remasked.mappings.map((mapping) => ({
+      entity_type: mapping.type,
+      original_value: mapping.original,
+      token: mapping.token || mapping.hash || '[MASKED]',
+      span_start: mapping.start,
+      span_end: mapping.end
+    }));
+
+    try {
+      await invoke('update_item_masking', {
+        itemId,
+        maskedContent: remasked.maskedText,
+        entities
+      });
+
+      selectedItem = await invoke<ItemDetail>('get_item', { itemId });
+      await refreshItems();
+      showToast(`Removed custom type ${normalizedType}`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to delete custom type');
+    } finally {
+      confirmDeleteCustomType = null;
+    }
+  }
 
   async function deleteItem(item: VaultItem) {
     await invoke('delete_item', { itemId: item.id });
@@ -328,9 +500,7 @@
       }
       await invoke('export_zip', { items: zipItems });
     } catch (err) {
-      if (toastTimeout) clearTimeout(toastTimeout);
-      toastMessage = err instanceof Error ? err.message : 'Export failed';
-      toastTimeout = setTimeout(() => { toastMessage = ''; }, 2000);
+      showToast(err instanceof Error ? err.message : 'Export failed');
     } finally {
       exportingAll = false;
     }
@@ -436,6 +606,7 @@
           oncopy={copyMaskedText}
           onexport={exportFile}
           onexportpdf={exportMaskedPdf}
+          onaddselectedentity={addCustomEntity}
           ontoggleviewmode={(mode) => viewMode = mode}
         />
       {/if}
@@ -465,11 +636,25 @@
           oncancel={() => confirmDeleteItem = null}
         />
       {/if}
+      {#if confirmDeleteCustomType}
+        <ConfirmDialog
+          message="Delete custom type <strong>{confirmDeleteCustomType}</strong> from this document? This cannot be undone."
+          confirmLabel="Delete Type"
+          cancelLabel="Cancel"
+          onconfirm={() => confirmDeleteCustomType && removeCustomEntityType(confirmDeleteCustomType)}
+          oncancel={() => confirmDeleteCustomType = null}
+        />
+      {/if}
     {/if}
   </main>
 
   <!-- Right Sidebar: Entity Panel -->
-  <EntityPanel {activeView} {selectedItem} {items} />
+  <EntityPanel
+    {activeView}
+    {selectedItem}
+    {items}
+    onrequestdeletecustomtype={requestDeleteCustomEntityType}
+  />
 </div>
 
 {#if toastMessage}

@@ -14,7 +14,6 @@ import { ollamaClient } from './llm/ollama';
 import { maskingConfig, getEffectiveStrategy } from './stores/maskingConfig';
 import { get } from 'svelte/store';
 import type { StrategyConfig } from './stores/maskingConfig';
-import type { EntityType } from './detectors/types';
 
 export interface UnifiedMaskResult {
   maskedText: string;
@@ -434,9 +433,8 @@ async function maskWithHybrid(
     : preliminaryEntities;
   
   // Remask with final entity set
-  // Map entities to Detection format (type needs to be EntityType)
   const finalMask = mask(text, finalEntities.map(e => ({
-    type: e.type as EntityType,
+    type: e.type,
     value: e.value,
     start: e.start,
     end: e.end,

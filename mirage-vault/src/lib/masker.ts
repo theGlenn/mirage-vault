@@ -1,10 +1,10 @@
-import type { Detection, EntityType } from './detectors/types';
+import type { Detection } from './detectors/types';
 
 export interface Mapping {
 	token: string;
 	hash: string;
 	original: string;
-	type: EntityType;
+	type: string;
 	start: number;
 	end: number;
 }
@@ -89,11 +89,12 @@ export function mask(text: string, detections: Detection[]): MaskResult {
 		// Append text between previous detection and this one
 		result += text.slice(cursor, resolved.start);
 
-		let hash = valueToHash.get(resolved.value);
+		const key = `${resolved.type}::${resolved.value}`;
+		let hash = valueToHash.get(key);
 
 		if (!hash) {
-			hash = generateHash(resolved.value);
-			valueToHash.set(resolved.value, hash);
+			hash = generateHash(`${resolved.type}::${resolved.value}`);
+			valueToHash.set(key, hash);
 			hashMappings.set(hash, resolved.value);
 		}
 

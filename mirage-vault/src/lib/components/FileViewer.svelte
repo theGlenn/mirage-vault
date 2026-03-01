@@ -1,5 +1,6 @@
 <script lang="ts">
   import PixelIcon from './PixelIcon.svelte';
+  import { BASE_ENTITY_TYPE_ORDER, createEntityTypeColorMap, normalizeEntityTypeName } from '$lib/entityColors';
 
   interface EntityDetail {
     id: number;
@@ -42,6 +43,7 @@
     PHONE: 'Phone',
     API_KEY: 'API Key'
   };
+  const BASE_ENTITY_TYPES: string[] = [...BASE_ENTITY_TYPE_ORDER];
 
   const MASK_TOKEN_PATTERN = /\[\[[A-Z_]+:[A-Za-z0-9]+\]\]/g;
   const MASK_ASCII_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+-=[]{}|;:,.<>?/';
@@ -71,6 +73,12 @@
       hash |= 0;
     }
     return hash >>> 0;
+  }
+
+  function getEntityHighlightStyle(type: string): string {
+    const normalized = normalizeEntityTypeName(type);
+    const rgb = entityTypeColorMap.get(normalized) ?? '107 114 128';
+    return `background-color: rgb(${rgb} / 0.16); border-bottom-color: rgb(${rgb});`;
   }
 
   function obfuscateAscii(seedInput: string, desiredLength: number): string {
@@ -200,6 +208,23 @@
       .map(e => ({ ...e, span_start: e.span_start - block.start, span_end: e.span_end - block.start }));
   }
 
+  function getLegendTypes(entities: EntityDetail[]): string[] {
+    const extras = Array.from(
+      new Set(
+        entities
+          .map((entity) => normalizeEntityTypeName(entity.entity_type))
+          .filter((type) => type && !BASE_ENTITY_TYPES.includes(type))
+      )
+    ).sort((a, b) => a.localeCompare(b));
+
+    return [...BASE_ENTITY_TYPES, ...extras];
+  }
+
+  function getEntityLabel(type: string): string {
+    const normalized = normalizeEntityTypeName(type);
+    return ENTITY_TYPE_LABELS[normalized] || normalized;
+  }
+
   let {
     selectedItem,
     viewMode,
@@ -207,6 +232,7 @@
     oncopy,
     onexport,
     onexportpdf,
+    onaddselectedentity,
     ontoggleviewmode
   }: {
     selectedItem: ItemDetail;
@@ -215,8 +241,96 @@
     oncopy: () => void;
     onexport: () => void;
     onexportpdf: () => void;
+    onaddselectedentity: (payload: { entityType: string; value: string }) => Promise<void> | void;
     ontoggleviewmode: (mode: 'masked' | 'original') => void;
   } = $props();
+
+  let entityTypeColorMap = $derived.by(() => {
+    const types = selectedItem.entities.map((entity) => entity.entity_type);
+    return createEntityTypeColorMap([...BASE_ENTITY_TYPES, ...types]);
+  });
+
+  let originalContentEl: HTMLDivElement | null = $state(null);
+  let selectionPopupOpen = $state(false);
+  let selectionText = $state('');
+  let selectionTypeInput = $state('PERSON');
+  let selectionPopupLeft = $state(0);
+  let selectionPopupTop = $state(0);
+
+  function closeSelectionPopup() {
+    selectionPopupOpen = false;
+    selectionText = '';
+  }
+
+  function updateSelectionPopup() {
+    if (viewMode !== 'original' || !originalContentEl) {
+      closeSelectionPopup();
+      return;
+    }
+
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+      closeSelectionPopup();
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    if (!originalContentEl.contains(range.commonAncestorContainer)) {
+      closeSelectionPopup();
+      return;
+    }
+
+    const selected = selection.toString().trim();
+    if (!selected) {
+      closeSelectionPopup();
+      return;
+    }
+
+    const rect = range.getBoundingClientRect();
+    const containerRect = originalContentEl.getBoundingClientRect();
+
+    const popupWidth = 280;
+    let left = rect.left - containerRect.left + rect.width / 2 - popupWidth / 2;
+    left = Math.max(12, Math.min(left, Math.max(12, containerRect.width - popupWidth - 12)));
+
+    let top = rect.top - containerRect.top - 78;
+    if (top < 8) {
+      top = rect.bottom - containerRect.top + 8;
+    }
+
+    selectionText = selected;
+    selectionPopupLeft = left;
+    selectionPopupTop = top;
+    selectionPopupOpen = true;
+  }
+
+  function handleOriginalMouseUp(event: MouseEvent) {
+    const target = event.target;
+    if (target instanceof HTMLElement && target.closest('.selection-popup')) {
+      return;
+    }
+    queueMicrotask(updateSelectionPopup);
+  }
+
+  function submitSelectedEntity() {
+    const normalizedType = normalizeEntityTypeName(selectionTypeInput);
+    if (!normalizedType || !selectionText) {
+      return;
+    }
+
+    onaddselectedentity({
+      entityType: normalizedType,
+      value: selectionText
+    });
+    closeSelectionPopup();
+    window.getSelection()?.removeAllRanges();
+  }
+
+  $effect(() => {
+    if (viewMode !== 'original' && selectionPopupOpen) {
+      closeSelectionPopup();
+    }
+  });
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
@@ -267,10 +381,10 @@
 
     {#if viewMode === 'original'}
       <div class="entity-legend">
-        {#each Object.entries(ENTITY_TYPE_LABELS) as [type, label]}
+        {#each getLegendTypes(selectedItem.entities) as type}
           <span class="legend-item">
-            <span class="legend-swatch entity-{type.toLowerCase()}"></span>
-            {label}
+            <span class="legend-swatch" style={getEntityHighlightStyle(type)}></span>
+            {getEntityLabel(type)}
           </span>
         {/each}
       </div>
@@ -284,9 +398,55 @@
     {/if}
 
     {#if viewMode === 'masked'}
-      <div class="viewer-content">{#each splitByPageMarkers(selectedItem.masked_content) as seg}{#if seg.type === 'marker'}<div class="page-marker">{seg.text}</div>{:else}{#each buildMaskedSegments(seg.text, selectedItem.entities) as segment}{#if segment.entity}<span class="entity-highlight masked-obfuscated entity-{segment.entity.entity_type.toLowerCase()}" data-tooltip="{'\u2192'} {segment.entity.original_value}">{segment.text}</span>{:else}{segment.text}{/if}{/each}{/if}{/each}</div>
+      <div class="viewer-content">{#each splitByPageMarkers(selectedItem.masked_content) as seg}{#if seg.type === 'marker'}<div class="page-marker">{seg.text}</div>{:else}{#each buildMaskedSegments(seg.text, selectedItem.entities) as segment}{#if segment.entity}<span class="entity-highlight masked-obfuscated" style={getEntityHighlightStyle(segment.entity.entity_type)} data-tooltip="{'\u2192'} {segment.entity.original_value}">{segment.text}</span>{:else}{segment.text}{/if}{/each}{/if}{/each}</div>
     {:else}
-      <div class="viewer-content">{#each splitByPageMarkers(selectedItem.raw_content) as seg}{#if seg.type === 'marker'}<div class="page-marker">{seg.text}</div>{:else}{#each buildHighlightedSegments(seg.text, getEntitiesForBlock(selectedItem.entities, seg)) as segment}{#if segment.entity}<span class="entity-highlight entity-{segment.entity.entity_type.toLowerCase()}" data-tooltip="{'\u2192'} {segment.entity.token}">{segment.text}</span>{:else}{segment.text}{/if}{/each}{/if}{/each}</div>
+      <div class="viewer-content viewer-content-original" role="presentation" bind:this={originalContentEl} onmouseup={handleOriginalMouseUp}>
+        {#each splitByPageMarkers(selectedItem.raw_content) as seg}
+          {#if seg.type === 'marker'}
+            <div class="page-marker">{seg.text}</div>
+          {:else}
+            {#each buildHighlightedSegments(seg.text, getEntitiesForBlock(selectedItem.entities, seg)) as segment}
+              {#if segment.entity}
+                <span
+                  class="entity-highlight"
+                  style={getEntityHighlightStyle(segment.entity.entity_type)}
+                  data-tooltip="{'\u2192'} {segment.entity.token}"
+                >{segment.text}</span>
+              {:else}
+                {segment.text}
+              {/if}
+            {/each}
+          {/if}
+        {/each}
+
+        {#if selectionPopupOpen}
+          <div
+            class="selection-popup"
+            style={`left: ${selectionPopupLeft}px; top: ${selectionPopupTop}px;`}
+          >
+            <div class="selection-popup-text">{selectionText}</div>
+            <input
+              class="selection-popup-type"
+              list="entity-type-options"
+              bind:value={selectionTypeInput}
+              placeholder="Type (e.g. CLIENT, PROJECT_CODE)"
+            />
+            <datalist id="entity-type-options">
+              {#each BASE_ENTITY_TYPES as type}
+                <option value={type}></option>
+              {/each}
+            </datalist>
+            <div class="selection-popup-actions">
+              <button class="selection-popup-btn" type="button" onclick={submitSelectedEntity}>
+                Assign
+              </button>
+              <button class="selection-popup-btn selection-popup-btn-secondary" type="button" onclick={closeSelectionPopup}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        {/if}
+      </div>
     {/if}
   </div>
 </div>
@@ -463,6 +623,10 @@
   text-align: start;
 }
 
+.viewer-content-original {
+  position: relative;
+}
+
 .page-marker {
   text-align: center;
   color: var(--text-muted);
@@ -506,10 +670,64 @@
   pointer-events: none;
 }
 
-.entity-email { background-color: rgba(37, 99, 235, 0.15); border-bottom-color: var(--entity-email); }
-.entity-person { background-color: rgba(22, 163, 74, 0.15); border-bottom-color: var(--entity-person); }
-.entity-org { background-color: rgba(234, 88, 12, 0.15); border-bottom-color: var(--entity-org); }
-.entity-amt { background-color: rgba(220, 38, 38, 0.15); border-bottom-color: var(--entity-amt); }
-.entity-phone { background-color: rgba(147, 51, 234, 0.15); border-bottom-color: var(--entity-phone); }
-.entity-api_key { background-color: rgba(107, 114, 128, 0.15); border-bottom-color: var(--entity-api-key); }
+.selection-popup {
+  position: absolute;
+  z-index: 70;
+  width: 280px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  border-radius: 10px;
+  padding: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.selection-popup-text {
+  font-size: 12px;
+  font-family: 'Geist Mono', monospace;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 8px;
+}
+
+.selection-popup-type {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 9px;
+  box-sizing: border-box;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.selection-popup-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.selection-popup-btn {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: 'Geist Pixel', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 10px;
+  padding: 7px 8px;
+  cursor: pointer;
+}
+
+.selection-popup-btn:hover {
+  border-color: var(--border-accent);
+  background: var(--bg-primary);
+}
+
+.selection-popup-btn-secondary {
+  opacity: 0.82;
+}
 </style>

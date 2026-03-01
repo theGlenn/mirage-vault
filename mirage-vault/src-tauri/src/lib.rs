@@ -26,6 +26,7 @@ pub fn run() {
             commands::is_encryption_initialized,
             commands::clear_encryption_key,
             commands::save_item,
+            commands::update_item_masking,
             commands::list_items,
             commands::get_item,
             commands::delete_item,

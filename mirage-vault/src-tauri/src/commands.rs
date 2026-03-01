@@ -49,6 +49,21 @@ pub struct ItemDetail {
     pub entities: Vec<EntityOutput>,
 }
 
+fn extract_hash_from_token(token: &str) -> Option<String> {
+    let trimmed = token.trim();
+    if !(trimmed.starts_with("[[") && trimmed.ends_with("]]")) {
+        return None;
+    }
+
+    let inner = &trimmed[2..trimmed.len() - 2];
+    let (_entity_type, hash) = inner.split_once(':')?;
+    if hash.is_empty() || !hash.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+
+    Some(hash.to_string())
+}
+
 // --- Key Management Commands ---
 
 #[tauri::command]
@@ -120,6 +135,100 @@ pub fn save_item(
     }
     Ok(item_id)
 }
+
+#[tauri::command]
+pub fn update_item_masking(
+    db: State<'_, DbState>,
+    item_id: i64,
+    masked_content: String,
+    entities: Vec<EntityInput>,
+) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+
+    conn.execute_batch("BEGIN TRANSACTION;")
+        .map_err(|e| e.to_string())?;
+
+    let updated = conn
+        .execute(
+            "UPDATE items SET masked_content = ?1 WHERE id = ?2",
+            rusqlite::params![masked_content, item_id],
+        )
+        .map_err(|e| {
+            let _ = conn.execute_batch("ROLLBACK;");
+            e.to_string()
+        })?;
+
+    if updated == 0 {
+        let _ = conn.execute_batch("ROLLBACK;");
+        return Err("Item not found.".to_string());
+    }
+
+    conn.execute(
+        "DELETE FROM entities WHERE item_id = ?1",
+        rusqlite::params![item_id],
+    )
+    .map_err(|e| {
+        let _ = conn.execute_batch("ROLLBACK;");
+        e.to_string()
+    })?;
+
+    conn.execute(
+        "DELETE FROM hash_mappings WHERE item_id = ?1",
+        rusqlite::params![item_id],
+    )
+    .map_err(|e| {
+        let _ = conn.execute_batch("ROLLBACK;");
+        e.to_string()
+    })?;
+
+    let mut seen_hashes = std::collections::HashSet::new();
+
+    for entity in &entities {
+        let encrypted_value = if crypto::is_key_set() {
+            crypto::encrypt(&entity.original_value).map_err(|e| {
+                let _ = conn.execute_batch("ROLLBACK;");
+                e
+            })?
+        } else {
+            entity.original_value.clone()
+        };
+
+        conn.execute(
+            "INSERT INTO entities (item_id, entity_type, original_value, token, span_start, span_end) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                item_id,
+                entity.entity_type,
+                encrypted_value,
+                entity.token,
+                entity.span_start,
+                entity.span_end,
+            ],
+        )
+        .map_err(|e| {
+            let _ = conn.execute_batch("ROLLBACK;");
+            e.to_string()
+        })?;
+
+        if let Some(hash) = extract_hash_from_token(&entity.token) {
+            if seen_hashes.insert(hash.clone()) {
+                conn.execute(
+                    "INSERT INTO hash_mappings (item_id, hash, original, entity_type) VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![item_id, hash, entity.original_value, entity.entity_type],
+                )
+                .map_err(|e| {
+                    let _ = conn.execute_batch("ROLLBACK;");
+                    e.to_string()
+                })?;
+            }
+        }
+    }
+
+    conn.execute_batch("COMMIT;")
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 #[tauri::command]
 pub fn list_items(db: State<'_, DbState>) -> Result<Vec<ItemSummary>, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
