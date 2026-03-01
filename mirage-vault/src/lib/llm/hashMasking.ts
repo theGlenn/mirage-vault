@@ -40,6 +40,59 @@ function generateHash(text: string): string {
   return Math.abs(hash).toString(16).padStart(8, '0').substring(0, 8);
 }
 
+function resolveCanonicalHash(
+  original: string,
+  canonicalToOriginal: Map<string, string>
+): string {
+  let attempt = 0;
+  while (true) {
+    const seed = attempt === 0 ? original : `${original}#${attempt}`;
+    const candidate = generateHash(seed);
+    const existingOriginal = canonicalToOriginal.get(candidate);
+    if (!existingOriginal || existingOriginal === original) {
+      return candidate;
+    }
+    attempt++;
+  }
+}
+
+function normalizeHashesPerDocument(
+  maskedText: string,
+  mappings: Map<string, string>
+): { maskedText: string; mappings: Map<string, string> } {
+  if (mappings.size === 0) {
+    return { maskedText, mappings };
+  }
+
+  const originalToCanonical = new Map<string, string>();
+  const canonicalToOriginal = new Map<string, string>();
+  const hashToCanonical = new Map<string, string>();
+
+  for (const [hash, original] of mappings.entries()) {
+    if (!hash || !original) continue;
+    let canonical = originalToCanonical.get(original);
+    if (!canonical) {
+      canonical = resolveCanonicalHash(original, canonicalToOriginal);
+      originalToCanonical.set(original, canonical);
+      canonicalToOriginal.set(canonical, original);
+    }
+    hashToCanonical.set(hash.toLowerCase(), canonical);
+  }
+
+  const normalizedMaskedText = maskedText.replace(
+    /\[\[([A-Z_]+):([A-Za-z0-9]+)\]\]/g,
+    (full, type, rawHash) => {
+      const canonical = hashToCanonical.get(String(rawHash).toLowerCase());
+      return canonical ? `[[${type}:${canonical}]]` : full;
+    }
+  );
+
+  return {
+    maskedText: normalizedMaskedText,
+    mappings: canonicalToOriginal,
+  };
+}
+
 /**
  * Prompt for hash-based masking
  * 
@@ -70,6 +123,7 @@ INSTRUCTIONS:
 
 RULES:
 - Generate UNIQUE hashes for each entity (use text content + position if needed)
+- If the exact same original value appears multiple times, reuse the same hash within this document
 - Preserve all non-PII text exactly as-is
 - The masked_text must be reconstructable using the mappings
 - Include ALL detected entities in the mappings array
@@ -107,6 +161,7 @@ Output: "[[PERSON:a3f7b2d1|John Smith]] emailed [[EMAIL:e8c9a4f2|john@email.com]
 RULES:
 - Use the EXACT format: [[TYPE:HASH|original]]
 - Hash must be unique per entity
+- If the exact same original value appears multiple times, reuse the same hash
 - Preserve all other text exactly
 - Do not add explanations, only return the masked text
 
@@ -117,33 +172,30 @@ MASK THIS TEXT:`;
  */
 function parseSimpleFormat(text: string): HashMaskingResult {
   const mappings = new Map<string, string>();
-  const hashMappings: HashMapping[] = [];
   
   // Regex to find [[TYPE:HASH|original]]
-  const pattern = /\[\[([A-Z]+):([a-z0-9]{8})\|([^\]]+)\]\]/g;
+  const pattern = /\[\[([A-Z_]+):([A-Za-z0-9]{8})\|([^\]]+)\]\]/g;
   
   let maskedText = text;
   let match;
   
   while ((match = pattern.exec(text)) !== null) {
     const [fullMatch, type, hash, original] = match;
-    mappings.set(hash, original);
-    hashMappings.push({
-      hash,
-      original,
-      type,
-    });
+    const normalizedHash = hash.toLowerCase();
+    mappings.set(normalizedHash, original);
     // Replace with [[TYPE:HASH]] for clean output
-    maskedText = maskedText.replace(fullMatch, `[[${type}:${hash}]]`);
+    maskedText = maskedText.replace(fullMatch, `[[${type}:${normalizedHash}]]`);
   }
+
+  const normalized = normalizeHashesPerDocument(maskedText, mappings);
   
   return {
-    maskedText,
-    mappings,
+    maskedText: normalized.maskedText,
+    mappings: normalized.mappings,
     metadata: {
       model: '',
       durationMs: 0,
-      entitiesMasked: mappings.size,
+      entitiesMasked: normalized.mappings.size,
     },
   };
 }
@@ -159,18 +211,23 @@ function parseJsonFormat(jsonText: string): HashMaskingResult {
     if (parsed.mappings && Array.isArray(parsed.mappings)) {
       for (const mapping of parsed.mappings) {
         if (mapping.hash && mapping.original) {
-          mappings.set(mapping.hash, mapping.original);
+          mappings.set(String(mapping.hash).toLowerCase(), mapping.original);
         }
       }
     }
+
+    const normalized = normalizeHashesPerDocument(
+      parsed.masked_text || parsed.maskedText || '',
+      mappings
+    );
     
     return {
-      maskedText: parsed.masked_text || parsed.maskedText || '',
-      mappings,
+      maskedText: normalized.maskedText,
+      mappings: normalized.mappings,
       metadata: {
         model: '',
         durationMs: 0,
-        entitiesMasked: mappings.size,
+        entitiesMasked: normalized.mappings.size,
       },
     };
   } catch (error) {
