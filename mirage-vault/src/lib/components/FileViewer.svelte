@@ -43,6 +43,106 @@
     API_KEY: 'API Key'
   };
 
+  const MASK_TOKEN_PATTERN = /\[\[[A-Z_]+:[A-Za-z0-9]+\]\]/g;
+  const MASK_ASCII_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+-=[]{}|;:,.<>?/';
+
+  function normalizeToken(token: string): string {
+    return token.trim().toLowerCase();
+  }
+
+  function extractHashFromToken(token: string): string | null {
+    const tokenMatch = token.match(/\[\[[A-Z_]+:([A-Za-z0-9]+)\]\]/i);
+    if (tokenMatch?.[1]) {
+      return tokenMatch[1].toLowerCase();
+    }
+
+    const raw = token.trim();
+    if (/^[A-Za-z0-9]{8}$/.test(raw)) {
+      return raw.toLowerCase();
+    }
+
+    return null;
+  }
+
+  function hashString(input: string): number {
+    let hash = 0;
+    for (let i = 0; i < input.length; i++) {
+      hash = ((hash << 5) - hash) + input.charCodeAt(i);
+      hash |= 0;
+    }
+    return hash >>> 0;
+  }
+
+  function obfuscateAscii(seedInput: string, desiredLength: number): string {
+    const length = Math.max(6, Math.min(desiredLength, 24));
+    let seed = hashString(seedInput) || 0x9e3779b9;
+    let output = '';
+
+    for (let i = 0; i < length; i++) {
+      seed ^= seed << 13;
+      seed ^= seed >>> 17;
+      seed ^= seed << 5;
+      const idx = Math.abs(seed) % MASK_ASCII_CHARS.length;
+      output += MASK_ASCII_CHARS[idx];
+    }
+
+    return output;
+  }
+
+  function buildMaskedSegments(text: string, entities: EntityDetail[]): TextSegment[] {
+    MASK_TOKEN_PATTERN.lastIndex = 0;
+
+    const byToken = new Map<string, EntityDetail[]>();
+    const byHash = new Map<string, EntityDetail[]>();
+    for (const entity of entities) {
+      const normalized = normalizeToken(entity.token);
+      const tokenQueue = byToken.get(normalized) ?? [];
+      tokenQueue.push(entity);
+      byToken.set(normalized, tokenQueue);
+
+      const hash = extractHashFromToken(entity.token);
+      if (hash) {
+        const hashQueue = byHash.get(hash) ?? [];
+        hashQueue.push(entity);
+        byHash.set(hash, hashQueue);
+      }
+    }
+
+    const segments: TextSegment[] = [];
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = MASK_TOKEN_PATTERN.exec(text)) !== null) {
+      const token = match[0];
+      if (match.index > lastIndex) {
+        segments.push({ text: text.substring(lastIndex, match.index) });
+      }
+
+      const normalizedToken = normalizeToken(token);
+      const tokenQueue = byToken.get(normalizedToken);
+      let entity = tokenQueue?.shift();
+
+      if (!entity) {
+        const hash = extractHashFromToken(token);
+        if (hash) {
+          const hashQueue = byHash.get(hash);
+          entity = hashQueue?.shift();
+        }
+      }
+
+      const sourceLength = entity?.original_value.length || token.length;
+      const obfuscated = obfuscateAscii(`${token}|${entity?.original_value ?? ''}`, sourceLength);
+      segments.push({ text: obfuscated, entity });
+      lastIndex = match.index + token.length;
+    }
+
+    if (lastIndex < text.length) {
+      segments.push({ text: text.substring(lastIndex) });
+    }
+
+    return segments.length ? segments : [{ text }];
+  }
+
   function buildHighlightedSegments(text: string, entities: EntityDetail[]): TextSegment[] {
     if (!entities.length) return [{ text }];
     const sorted = [...entities].sort((a, b) => a.span_start - b.span_start);
@@ -173,7 +273,7 @@
     {/if}
 
     {#if viewMode === 'masked'}
-      <div class="viewer-content">{#each splitByPageMarkers(selectedItem.masked_content) as seg}{#if seg.type === 'marker'}<div class="page-marker">{seg.text}</div>{:else}{seg.text}{/if}{/each}</div>
+      <div class="viewer-content">{#each splitByPageMarkers(selectedItem.masked_content) as seg}{#if seg.type === 'marker'}<div class="page-marker">{seg.text}</div>{:else}{#each buildMaskedSegments(seg.text, selectedItem.entities) as segment}{#if segment.entity}<span class="entity-highlight masked-obfuscated entity-{segment.entity.entity_type.toLowerCase()}" data-tooltip="{'\u2192'} {segment.entity.original_value}">{segment.text}</span>{:else}{segment.text}{/if}{/each}{/if}{/each}</div>
     {:else}
       <div class="viewer-content">{#each splitByPageMarkers(selectedItem.raw_content) as seg}{#if seg.type === 'marker'}<div class="page-marker">{seg.text}</div>{:else}{#each buildHighlightedSegments(seg.text, getEntitiesForBlock(selectedItem.entities, seg)) as segment}{#if segment.entity}<span class="entity-highlight entity-{segment.entity.entity_type.toLowerCase()}" data-tooltip="{'\u2192'} {segment.entity.token}">{segment.text}</span>{:else}{segment.text}{/if}{/each}{/if}{/each}</div>
     {/if}
@@ -370,6 +470,11 @@
   cursor: help;
   position: relative;
   border-bottom: 2px solid;
+}
+
+.masked-obfuscated {
+  letter-spacing: 0.04em;
+  font-weight: 600;
 }
 
 .entity-highlight:hover::after {
