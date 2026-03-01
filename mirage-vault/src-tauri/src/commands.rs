@@ -1,5 +1,6 @@
 use crate::crypto;
 use crate::db::DbState;
+use pdfium_render::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::io::{Cursor, Write};
 use tauri::State;
@@ -389,6 +390,47 @@ pub struct PdfExtractResult {
 
 #[tauri::command]
 pub fn extract_pdf_text(content: Vec<u8>) -> Result<PdfExtractResult, String> {
+    match extract_pdf_text_with_pdfium(&content) {
+        Ok(result) => Ok(result),
+        Err(_) => extract_pdf_text_with_lopdf(&content),
+    }
+}
+
+fn extract_pdf_text_with_pdfium(content: &[u8]) -> Result<PdfExtractResult, String> {
+    let bindings = Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
+        .or_else(|_| Pdfium::bind_to_system_library())
+        .map_err(|e| format!("Failed to bind to Pdfium library: {}", e))?;
+
+    let pdfium = Pdfium::new(bindings);
+    let document = pdfium
+        .load_pdf_from_byte_vec(content.to_vec(), None)
+        .map_err(|e| format!("Failed to parse PDF file: {}", e))?;
+
+    let page_count = document.pages().len() as u32;
+    let mut texts: Vec<String> = Vec::new();
+    let mut empty_pages = 0u32;
+
+    for (index, page) in document.pages().iter().enumerate() {
+        let page_text = page
+            .text()
+            .map_err(|e| format!("Failed to extract text from page {}: {}", index + 1, e))?;
+        let trimmed = page_text.all().trim().to_string();
+
+        if index > 0 {
+            texts.push(format!("\n\n--- Page {} ---\n\n", index + 1));
+        }
+
+        if trimmed.is_empty() {
+            empty_pages += 1;
+        }
+
+        texts.push(trimmed);
+    }
+
+    build_pdf_extract_result(texts, page_count, empty_pages)
+}
+
+fn extract_pdf_text_with_lopdf(content: &[u8]) -> Result<PdfExtractResult, String> {
     let doc = lopdf::Document::load_from(Cursor::new(content))
         .map_err(|_| "Failed to parse PDF file.".to_string())?;
 
@@ -398,9 +440,7 @@ pub fn extract_pdf_text(content: Vec<u8>) -> Result<PdfExtractResult, String> {
     let mut empty_pages = 0u32;
 
     for (i, page_num) in pages.keys().enumerate() {
-        let page_text = doc
-            .extract_text(&[*page_num])
-            .unwrap_or_default();
+        let page_text = doc.extract_text(&[*page_num]).unwrap_or_default();
         let trimmed = page_text.trim().to_string();
 
         if i > 0 {
@@ -414,12 +454,18 @@ pub fn extract_pdf_text(content: Vec<u8>) -> Result<PdfExtractResult, String> {
         texts.push(trimmed);
     }
 
+    build_pdf_extract_result(texts, page_count, empty_pages)
+}
+
+fn build_pdf_extract_result(
+    texts: Vec<String>,
+    page_count: u32,
+    empty_pages: u32,
+) -> Result<PdfExtractResult, String> {
     let combined = texts.join("");
 
     if combined.trim().is_empty() {
-        return Err(
-            "No extractable text found. This may be a scanned document.".to_string(),
-        );
+        return Err("No extractable text found. This may be a scanned document.".to_string());
     }
 
     let has_warning = empty_pages > 0 && empty_pages < page_count;

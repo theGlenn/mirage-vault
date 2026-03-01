@@ -26,6 +26,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 tauri-plugin-dialog = "2"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 lopdf = "0.34"
+pdfium-render = "0.8.37"
 
 
 ring = "0.17"
