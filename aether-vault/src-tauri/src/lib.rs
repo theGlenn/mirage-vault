@@ -1,4 +1,5 @@
 mod commands;
+mod crypto;
 mod db;
 
 use std::sync::Mutex;
@@ -21,6 +22,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             greet,
+            commands::init_encryption,
+            commands::is_encryption_initialized,
+            commands::clear_encryption_key,
             commands::save_item,
             commands::list_items,
             commands::get_item,

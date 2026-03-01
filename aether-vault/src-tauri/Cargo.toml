@@ -27,3 +27,10 @@ tauri-plugin-dialog = "2"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 lopdf = "0.34"
 
+
+ring = "0.17"
+base64 = "0.22"
+rand = "0.8"
+keyring = { version = "3", features = ["sync-secret-service"] }
+
+once_cell = "1"
