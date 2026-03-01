@@ -158,7 +158,7 @@
   margin: 24px;
   padding: 48px 32px;
   border: 2px dashed var(--border);
-  border-radius: 0px;
+  border-radius: 12px;
   background: var(--bg-surface);
   color: var(--text-muted);
   transition: border-color 0.2s, background-color 0.2s;
@@ -200,13 +200,13 @@
 .action-btn {
   padding: 8px 16px;
   border: 2px solid var(--accent-orange);
-  border-radius: 0px;
+  border-radius: 8px;
   background-color: var(--accent-orange);
   color: #fff;
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  font-family: inherit;
+  font-family: 'Geist Pixel', monospace;
   transition: background-color 0.2s;
   margin-top: 4px;
 }
@@ -241,13 +241,14 @@
   width: 100%;
   padding: 10px;
   border: 2px solid var(--border);
-  border-radius: 0px;
+  border-radius: 6px;
   font-family: inherit;
   font-size: 13px;
   resize: vertical;
   background: var(--bg-surface);
   color: var(--text-primary);
   box-sizing: border-box;
+  text-align: start;
 }
 
 .paste-textarea:focus {
@@ -308,11 +309,11 @@
   gap: 6px;
   padding: 6px 12px;
   border: 2px solid var(--border);
-  border-radius: 0px;
+  border-radius: 8px;
   background: var(--bg-surface);
   color: var(--text-primary);
   font-size: 12px;
-  font-family: inherit;
+  font-family: 'Geist Pixel', monospace;
   cursor: pointer;
   transition: background-color 0.2s, border-color 0.2s;
 }
@@ -352,13 +353,13 @@
 .action-btn-secondary {
   padding: 8px 16px;
   border: 2px solid var(--border);
-  border-radius: 0px;
+  border-radius: 8px;
   background-color: var(--bg-elevated);
   color: var(--text-primary);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  font-family: inherit;
+  font-family: 'Geist Pixel', monospace;
   transition: background-color 0.2s;
 }
 

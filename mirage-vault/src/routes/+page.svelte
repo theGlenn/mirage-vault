@@ -477,10 +477,17 @@
 {/if}
 
 <style>
+:global(html), :global(body) {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  height: 100%;
+}
+
 :root {
-  font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
-  font-size: 16px;
-  line-height: 24px;
+  font-family: 'Geist', 'SF Pro Display', -apple-system, sans-serif;
+  font-size: 14px;
+  line-height: 22px;
   font-weight: 400;
   color: var(--text-primary);
   background-color: var(--bg-primary);
@@ -517,12 +524,12 @@
   background: var(--bg-elevated);
   color: var(--text-primary);
   font-size: 13px;
-  border-radius: 0px;
+  border-radius: 8px;
   border: 2px solid var(--border-accent);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   z-index: 100;
   pointer-events: none;
-  font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+  font-family: 'Geist', sans-serif;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }

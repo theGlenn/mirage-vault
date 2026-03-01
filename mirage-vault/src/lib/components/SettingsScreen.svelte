@@ -58,7 +58,7 @@
 	}
 
 	.settings-heading {
-		font-family: 'Press Start 2P', monospace;
+		font-family: 'Geist Pixel', monospace;
 		font-size: 14px;
 		color: var(--text-primary);
 		margin: 0 0 32px;
@@ -76,7 +76,7 @@
 	}
 
 	.section-label {
-		font-family: 'Press Start 2P', monospace;
+		font-family: 'Geist Pixel', monospace;
 		font-size: 8px;
 		color: var(--text-secondary);
 		letter-spacing: 0.08em;
@@ -87,7 +87,7 @@
 	.theme-toggle {
 		display: flex;
 		border: 2px solid var(--border);
-		border-radius: 0px;
+		border-radius: 8px;
 		overflow: hidden;
 		background: var(--bg-elevated);
 	}
@@ -100,11 +100,11 @@
 		gap: 6px;
 		padding: 10px 12px;
 		border: none;
-		border-radius: 0px;
+		border-radius: 0;
 		background: transparent;
 		color: var(--text-secondary);
 		cursor: pointer;
-		font-family: inherit;
+		font-family: 'Geist Pixel', monospace;
 		font-size: 12px;
 		transition: background-color 0.15s, color 0.15s;
 	}

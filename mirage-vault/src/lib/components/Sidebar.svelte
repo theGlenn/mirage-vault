@@ -52,7 +52,7 @@
 	}
 
 	.brand-text {
-		font-family: 'Press Start 2P', monospace;
+		font-family: 'Geist Pixel', monospace;
 		font-size: 8px;
 		color: var(--accent-yellow);
 		letter-spacing: 0.08em;
@@ -72,7 +72,7 @@
 		gap: 4px;
 		padding: 10px 4px;
 		border: none;
-		border-radius: 0px;
+		border-radius: 6px;
 		background: none;
 		color: var(--text-secondary);
 		cursor: pointer;
@@ -93,7 +93,7 @@
 	}
 
 	.nav-label {
-		font-family: 'Press Start 2P', monospace;
+		font-family: 'Geist Pixel', monospace;
 		font-size: 6px;
 		letter-spacing: 0.05em;
 		text-transform: uppercase;

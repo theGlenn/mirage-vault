@@ -47,7 +47,7 @@
 
 .confirm-dialog {
   background: var(--bg-surface);
-  border-radius: 0px;
+  border-radius: 12px;
   border: 2px solid var(--border);
   padding: 24px;
   max-width: 360px;
@@ -71,13 +71,13 @@
 .confirm-cancel {
   padding: 8px 16px;
   border: 2px solid var(--border);
-  border-radius: 0px;
+  border-radius: 8px;
   background: var(--bg-elevated);
   font-size: 13px;
   font-weight: 500;
   color: var(--text-primary);
   cursor: pointer;
-  font-family: inherit;
+  font-family: 'Geist Pixel', monospace;
 }
 
 .confirm-cancel:hover {
@@ -87,13 +87,13 @@
 .confirm-delete {
   padding: 8px 16px;
   border: 2px solid var(--accent-red);
-  border-radius: 0px;
+  border-radius: 8px;
   background: var(--accent-red);
   font-size: 13px;
   font-weight: 500;
   color: #fff;
   cursor: pointer;
-  font-family: inherit;
+  font-family: 'Geist Pixel', monospace;
 }
 
 .confirm-delete:hover {

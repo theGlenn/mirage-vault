@@ -307,7 +307,7 @@
   height: 90%;
   background: var(--bg-surface);
   border: 2px solid var(--border);
-  border-radius: 0px;
+  border-radius: 12px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -324,7 +324,7 @@
 
 .fileviewer-title {
   margin: 0;
-  font-family: 'Press Start 2P', monospace;
+  font-family: 'Geist Pixel', monospace;
   font-size: 10px;
   color: var(--text-primary);
   overflow: hidden;
@@ -362,7 +362,7 @@
 .view-toggle {
   display: flex;
   background-color: var(--bg-elevated);
-  border-radius: 0px;
+  border-radius: 8px;
   padding: 2px;
   border: 2px solid var(--border);
 }
@@ -370,14 +370,14 @@
 .toggle-btn {
   padding: 6px 16px;
   border: none;
-  border-radius: 0px;
+  border-radius: 6px;
   background: none;
   font-size: 13px;
   font-weight: 500;
   color: var(--text-secondary);
   cursor: pointer;
   transition: background-color 0.15s, color 0.15s;
-  font-family: inherit;
+  font-family: 'Geist Pixel', monospace;
 }
 
 .toggle-btn:hover:not(.toggle-btn-active) {
@@ -397,13 +397,13 @@
 .toolbar-btn {
   padding: 6px 14px;
   border: 2px solid var(--border);
-  border-radius: 0px;
+  border-radius: 8px;
   background: var(--bg-surface);
   font-size: 13px;
   font-weight: 500;
   color: var(--text-primary);
   cursor: pointer;
-  font-family: inherit;
+  font-family: 'Geist Pixel', monospace;
   transition: background-color 0.15s, border-color 0.15s;
 }
 
@@ -433,7 +433,7 @@
   display: inline-block;
   width: 12px;
   height: 12px;
-  border-radius: 0px;
+  border-radius: 2px;
   border-bottom: 2px solid;
 }
 
@@ -454,12 +454,13 @@
   margin: 0;
   padding: 16px;
   overflow: auto;
-  font-family: 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+  font-family: 'Geist Mono', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
   font-size: 13px;
   line-height: 1.6;
   white-space: pre-wrap;
   word-wrap: break-word;
   color: var(--text-primary);
+  text-align: start;
 }
 
 .page-marker {
@@ -469,14 +470,14 @@
   margin: 8px 0;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
-  font-family: 'Press Start 2P', monospace;
+  font-family: 'Geist Pixel', monospace;
   font-size: 8px;
   letter-spacing: 0.04em;
   white-space: normal;
 }
 
 .entity-highlight {
-  border-radius: 0px;
+  border-radius: 2px;
   padding: 1px 2px;
   cursor: help;
   position: relative;
@@ -498,7 +499,7 @@
   background: var(--bg-elevated);
   color: var(--text-primary);
   font-size: 11px;
-  border-radius: 0px;
+  border-radius: 4px;
   border: 1px solid var(--border);
   white-space: nowrap;
   z-index: 60;

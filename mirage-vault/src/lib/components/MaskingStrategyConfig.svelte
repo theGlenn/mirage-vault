@@ -297,7 +297,7 @@
     width: 100%;
     box-sizing: border-box;
     padding: 0;
-    font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+    font-family: 'Geist Mono', 'SF Mono', Monaco, monospace;
     color: var(--text-primary);
   }
 
@@ -313,7 +313,7 @@
     flex-direction: column;
     padding: 12px;
     border: 2px solid var(--border);
-    border-radius: 0px;
+    border-radius: 8px;
     background: var(--bg-elevated);
     cursor: pointer;
     text-align: left;
@@ -362,7 +362,7 @@
     color: #fff;
     font-size: 10px;
     font-weight: 600;
-    border-radius: 0px;
+    border-radius: 4px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
@@ -373,7 +373,7 @@
     color: #fff;
     font-size: 10px;
     font-weight: 600;
-    border-radius: 0px;
+    border-radius: 4px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
@@ -402,7 +402,7 @@
     padding: 8px;
     background: var(--bg-secondary);
     border: 1px solid var(--accent-red);
-    border-radius: 0px;
+    border-radius: 6px;
     font-size: 11px;
     color: var(--accent-red);
   }
@@ -417,7 +417,7 @@
     padding: 12px;
     background: var(--bg-secondary);
     border: 1px solid var(--border);
-    border-radius: 0px;
+    border-radius: 8px;
   }
 
   .toggle-label {
@@ -448,7 +448,7 @@
     padding: 10px 12px;
     background: transparent;
     border: 2px solid var(--border);
-    border-radius: 0px;
+    border-radius: 8px;
     cursor: pointer;
     font-size: 12px;
     font-weight: 500;
@@ -466,7 +466,7 @@
     margin-top: 12px;
     padding: 12px;
     border: 1px solid var(--border);
-    border-radius: 0px;
+    border-radius: 8px;
     background: var(--bg-secondary);
   }
 
@@ -512,7 +512,7 @@
     width: 100%;
     padding: 6px 10px;
     border: 2px solid var(--border);
-    border-radius: 0px;
+    border-radius: 6px;
     font-size: 12px;
     font-family: inherit;
     background: var(--bg-elevated);
@@ -539,7 +539,7 @@
     padding: 6px 8px;
     background: var(--bg-elevated);
     border: 2px solid var(--border);
-    border-radius: 0px;
+    border-radius: 6px;
     cursor: pointer;
     font-size: 14px;
   }
@@ -572,7 +572,7 @@
     padding: 10px 12px;
     background: var(--bg-secondary);
     border: 2px solid var(--border);
-    border-radius: 0px;
+    border-radius: 8px;
     font-size: 12px;
     color: var(--text-primary);
   }
@@ -585,7 +585,7 @@
     color: #fff;
     font-size: 10px;
     font-weight: 600;
-    border-radius: 0px;
+    border-radius: 4px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }

@@ -32,6 +32,17 @@
     }
   }
 
+  function getFileTypeColor(fileType: string): string {
+    switch (fileType) {
+      case 'txt': return 'var(--filetype-txt)';
+      case 'pdf': return 'var(--filetype-pdf)';
+      case 'csv': return 'var(--filetype-csv)';
+      case 'json': return 'var(--filetype-json)';
+      case 'md': return 'var(--filetype-md)';
+      default: return 'var(--text-secondary)';
+    }
+  }
+
   function formatDate(dateStr: string): string {
     const date = new Date(dateStr);
     if (isNaN(date.getTime())) return dateStr;
@@ -60,7 +71,7 @@
   <button class="file-card-delete" onclick={handleDelete} aria-label="Delete {item.name}">
     <PixelIcon name="trash" size={16} />
   </button>
-  <div class="file-card-icon">
+  <div class="file-card-icon" style="color: {getFileTypeColor(item.file_type)}">
     <PixelIcon name={getFileIcon(item.file_type)} size={32} />
   </div>
   <div class="file-card-name">
@@ -83,15 +94,19 @@
   flex-direction: column;
   gap: 8px;
   padding: 16px;
+  padding-left: 14px;
   background: var(--bg-surface);
   border: 2px solid var(--border);
-  border-radius: 0px;
+  border-left: 4px solid transparent;
+  border-radius: 8px;
   cursor: pointer;
   transition: background-color 0.15s, border-color 0.15s;
   text-align: left;
   font-family: inherit;
   color: inherit;
   width: 100%;
+  min-height: 0;
+  box-sizing: border-box;
 }
 
 .file-card:hover {
@@ -106,7 +121,7 @@
   display: none;
   padding: 4px;
   border: none;
-  border-radius: 0px;
+  border-radius: 4px;
   background: none;
   color: var(--accent-red);
   cursor: pointer;
@@ -157,6 +172,7 @@
   font-size: 11px;
   padding: 1px 6px;
   border: 1px solid var(--border);
+  border-radius: 4px;
   background: var(--bg-elevated);
 }
 

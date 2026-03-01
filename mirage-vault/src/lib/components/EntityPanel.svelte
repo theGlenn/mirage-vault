@@ -153,7 +153,7 @@
 
 .sidebar-header h2 {
   margin: 0;
-  font-family: 'Press Start 2P', monospace;
+  font-family: 'Geist Pixel', monospace;
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
@@ -197,7 +197,7 @@
   display: inline-block;
   width: 10px;
   height: 10px;
-  border-radius: 0px;
+  border-radius: 2px;
   border-bottom: 2px solid;
 }
 
@@ -234,7 +234,7 @@
 
 .entity-group-item-token {
   color: var(--text-muted);
-  font-family: 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+  font-family: 'Geist Mono', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
 }
 
 .entity-group-item-count {
@@ -258,7 +258,7 @@
 }
 
 .summary-label {
-  font-family: 'Press Start 2P', monospace;
+  font-family: 'Geist Pixel', monospace;
   font-size: 8px;
   color: var(--text-secondary);
   letter-spacing: 0.05em;
@@ -268,7 +268,7 @@
   font-size: 20px;
   font-weight: 700;
   color: var(--accent-yellow);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: 'Geist Mono', monospace;
 }
 
 .summary-section {
@@ -278,7 +278,7 @@
 }
 
 .summary-section-label {
-  font-family: 'Press Start 2P', monospace;
+  font-family: 'Geist Pixel', monospace;
   font-size: 8px;
   color: var(--text-secondary);
   letter-spacing: 0.05em;
@@ -295,7 +295,7 @@
 .type-name {
   font-size: 13px;
   color: var(--text-primary);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: 'Geist Mono', monospace;
 }
 
 .type-count {
