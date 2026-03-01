@@ -8,7 +8,7 @@
 
 <aside class="sidebar-nav">
 	<div class="sidebar-brand">
-		<span class="brand-text">VAULT</span>
+		<img src="/logo.png" alt="Mistral Mirage" class="brand-logo" />
 	</div>
 
 	<nav class="sidebar-menu">
@@ -56,15 +56,15 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		padding: 16px 4px;
+		padding: 12px 4px;
 		border-bottom: 1px solid var(--border-accent);
 	}
 
-	.brand-text {
-		font-family: 'Geist Pixel', monospace;
-		font-size: 8px;
-		color: var(--accent-yellow);
-		letter-spacing: 0.08em;
+	.brand-logo {
+		width: 44px;
+		height: 44px;
+		object-fit: contain;
+		border-radius: 8px;
 	}
 
 	.sidebar-menu {
