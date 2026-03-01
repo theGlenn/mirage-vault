@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+  import { open } from '@tauri-apps/plugin-dialog';
   import { onMount } from 'svelte';
   import { detect } from '$lib/detectors';
   import { mask } from '$lib/masker';
@@ -241,6 +242,28 @@
     });
   }
 
+
+  async function selectFiles() {
+    try {
+      const selected = await open({
+        multiple: true,
+        filters: [
+          {
+            name: 'Text and PDF files',
+            extensions: ['txt', 'md', 'csv', 'json', 'pdf']
+          }
+        ]
+      });
+      
+      if (selected && selected.length > 0) {
+        console.log('Selected files:', selected);
+        await handleFileDrop(selected);
+      }
+    } catch (err) {
+      console.error('Failed to select files:', err);
+      errorMessage = 'Failed to select files: ' + (err instanceof Error ? err.message : String(err));
+    }
+  }
   async function handlePasteSubmit() {
     if (!pasteText.trim()) return;
     errorMessage = '';
@@ -407,21 +430,37 @@
 
   // Load items on mount and set up Tauri drag-drop events
   onMount(() => {
-    refreshItems();
+    refreshItems().catch(err => {
+      console.error('Failed to refresh items:', err);
+      errorMessage = 'Failed to load vault items: ' + (err instanceof Error ? err.message : String(err));
+    });
 
     const webview = getCurrentWebviewWindow();
     let unlisten: (() => void) | undefined;
 
     webview.onDragDropEvent(async (event) => {
+      console.log('Drag-drop event:', event.payload.type);
       if (event.payload.type === 'enter') {
         dragOver = true;
       } else if (event.payload.type === 'leave') {
         dragOver = false;
       } else if (event.payload.type === 'drop') {
         dragOver = false;
-        await handleFileDrop(event.payload.paths);
+        console.log('Files dropped:', event.payload.paths);
+        try {
+          await handleFileDrop(event.payload.paths);
+        } catch (err) {
+          console.error('Failed to handle file drop:', err);
+          errorMessage = 'Failed to process files: ' + (err instanceof Error ? err.message : String(err));
+        }
       }
-    }).then(fn => { unlisten = fn; });
+    }).then(fn => { 
+      unlisten = fn; 
+      console.log('Drag-drop listener registered');
+    }).catch(err => {
+      console.error('Failed to register drag-drop listener:', err);
+      errorMessage = 'Failed to initialize drag-drop: ' + (err instanceof Error ? err.message : String(err));
+    });
 
     return () => {
       unlisten?.();
@@ -552,6 +591,9 @@
         {:else}
           <p class="drop-zone-text">Drop .txt, .md, .csv, .json, or .pdf files here</p>
         {/if}
+          <button class="paste-submit" onclick={selectFiles} disabled={processing} style="margin-top: 12px;">
+            {processing ? 'Processing...' : 'Select Files'}
+          </button>
 
         <div class="paste-divider">or paste text</div>
 
