@@ -1,6 +1,8 @@
 <script lang="ts">
   import PixelIcon from './PixelIcon.svelte';
   import type { IconName } from './PixelIcon.svelte';
+  import type { UploadProgress } from '$lib/types/upload';
+  import { STAGE_PROGRESS } from '$lib/types/upload';
 
   export interface VaultItem {
     id: number;
@@ -9,17 +11,33 @@
     entity_count: number;
     created_at: string;
     warning: string | null;
+    status: string;
   }
 
   let {
     item,
+    uploadProgress,
     onselect,
     ondelete
   }: {
     item: VaultItem;
+    uploadProgress?: UploadProgress;
     onselect: (id: number) => void;
     ondelete: (item: VaultItem) => void;
   } = $props();
+
+  let isProcessing = $derived(
+    uploadProgress?.stage === 'processing' ||
+    uploadProgress?.stage === 'reading' ||
+    uploadProgress?.stage === 'saving'
+  );
+
+  let isError = $derived(uploadProgress?.stage === 'error');
+  let progressPercent = $derived(uploadProgress?.progress ?? (item.status === 'done' ? 100 : 0));
+  let showProgressBar = $derived(
+    (uploadProgress != null && uploadProgress.stage !== 'done') ||
+    item.status === 'processing'
+  );
 
   function getFileIcon(fileType: string): IconName {
     switch (fileType) {
@@ -67,10 +85,26 @@
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-<div class="file-card" onclick={handleClick}>
-  <button class="file-card-delete" onclick={handleDelete} aria-label="Delete {item.name}">
-    <PixelIcon name="trash" size={16} />
-  </button>
+<div
+  class="file-card"
+  class:file-card-error={isError}
+  class:file-card-processing={isProcessing || item.status === 'processing'}
+  onclick={handleClick}
+>
+  {#if isProcessing || item.status === 'processing'}
+    <div class="file-card-spinner">
+      <div class="card-loading-spinner"></div>
+    </div>
+  {:else if isError}
+    <div class="file-card-error-icon">
+      <PixelIcon name="alert" size={16} />
+    </div>
+  {:else}
+    <button class="file-card-delete" onclick={handleDelete} aria-label="Delete {item.name}">
+      <PixelIcon name="trash" size={16} />
+    </button>
+  {/if}
+
   <div class="file-card-icon" style="color: {getFileTypeColor(item.file_type)}">
     <PixelIcon name={getFileIcon(item.file_type)} size={32} />
   </div>
@@ -81,10 +115,29 @@
     <span class="file-card-name-text">{item.name}</span>
   </div>
   <div class="file-card-meta">
-    <span class="file-card-entities">{item.entity_count} entities</span>
+    {#if isProcessing || item.status === 'processing'}
+      <span class="file-card-stage">{uploadProgress?.stage ?? 'processing'}...</span>
+    {:else if isError}
+      <span class="file-card-error-text">Error</span>
+    {:else}
+      <span class="file-card-entities">{item.entity_count} entities</span>
+    {/if}
     <span class="file-card-type">.{item.file_type}</span>
   </div>
-  <div class="file-card-date">{formatDate(item.created_at)}</div>
+
+  {#if !isError && !isProcessing && item.status === 'done'}
+    <div class="file-card-date">{formatDate(item.created_at)}</div>
+  {/if}
+
+  {#if showProgressBar}
+    <div class="file-card-progress-track">
+      <div
+        class="file-card-progress-fill"
+        class:file-card-progress-error={isError}
+        style="width: {isError ? STAGE_PROGRESS[uploadProgress?.errorStage ?? 'reading'] : progressPercent}%"
+      ></div>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -114,6 +167,23 @@
   border-left: 4px solid var(--border-accent);
 }
 
+.file-card-error {
+  border-color: var(--accent-red);
+  border-left: 4px solid var(--accent-red);
+}
+
+.file-card-error:hover {
+  border-left: 4px solid var(--accent-red);
+}
+
+.file-card-processing {
+  border-left: 4px solid var(--accent-orange);
+}
+
+.file-card-processing:hover {
+  border-left: 4px solid var(--accent-orange);
+}
+
 .file-card-delete {
   position: absolute;
   top: 8px;
@@ -134,6 +204,45 @@
 
 .file-card-delete:hover {
   background: var(--bg-surface);
+}
+
+.file-card-spinner {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+.card-loading-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent-orange);
+  border-radius: 50%;
+  animation: card-spin 0.8s steps(8) infinite;
+}
+
+@keyframes card-spin {
+  to { transform: rotate(360deg); }
+}
+
+.file-card-error-icon {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  color: var(--accent-red);
+}
+
+.file-card-error-text {
+  color: var(--accent-red);
+  font-weight: 500;
+  font-size: 12px;
+}
+
+.file-card-stage {
+  color: var(--accent-orange);
+  font-weight: 500;
+  font-size: 12px;
+  text-transform: capitalize;
 }
 
 .file-card-icon {
@@ -179,5 +288,28 @@
 .file-card-date {
   font-size: 11px;
   color: var(--text-muted);
+}
+
+/* Bottom progress bar */
+.file-card-progress-track {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--bg-elevated);
+  border-radius: 0 0 6px 6px;
+  overflow: hidden;
+}
+
+.file-card-progress-fill {
+  height: 100%;
+  background: var(--accent-orange);
+  transition: width 0.4s ease;
+  border-radius: 0 0 6px 6px;
+}
+
+.file-card-progress-error {
+  background: var(--accent-red);
 }
 </style>

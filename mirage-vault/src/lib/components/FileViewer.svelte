@@ -1,5 +1,6 @@
 <script lang="ts">
   import PixelIcon from './PixelIcon.svelte';
+  import type { UploadProgress } from '$lib/types/upload';
 
   interface EntityDetail {
     id: number;
@@ -203,20 +204,34 @@
   let {
     selectedItem,
     viewMode,
+    uploadProgress,
     onclose,
     oncopy,
     onexport,
     onexportpdf,
-    ontoggleviewmode
+    ontoggleviewmode,
+    onretry
   }: {
     selectedItem: ItemDetail;
     viewMode: 'masked' | 'original';
+    uploadProgress?: UploadProgress;
     onclose: () => void;
     oncopy: () => void;
     onexport: () => void;
     onexportpdf: () => void;
     ontoggleviewmode: (mode: 'masked' | 'original') => void;
+    onretry?: () => void;
   } = $props();
+
+  let isStillProcessing = $derived(
+    uploadProgress != null &&
+    uploadProgress.stage !== 'done' &&
+    uploadProgress.stage !== 'error'
+  );
+
+  let isError = $derived(
+    uploadProgress?.stage === 'error'
+  );
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
@@ -249,21 +264,40 @@
           class="toggle-btn"
           class:toggle-btn-active={viewMode === 'masked'}
           onclick={() => ontoggleviewmode('masked')}
+          disabled={isStillProcessing}
         >Masked</button>
         <button
           class="toggle-btn"
           class:toggle-btn-active={viewMode === 'original'}
           onclick={() => ontoggleviewmode('original')}
+          disabled={isStillProcessing}
         >Original</button>
       </div>
       <div class="toolbar-actions">
-        <button class="toolbar-btn" onclick={oncopy}>Copy</button>
-        <button class="toolbar-btn" onclick={onexport}>Export</button>
+        <button class="toolbar-btn" onclick={oncopy} disabled={isStillProcessing}>Copy</button>
+        <button class="toolbar-btn" onclick={onexport} disabled={isStillProcessing}>Export</button>
         {#if selectedItem.file_type === 'pdf' && selectedItem.raw_pdf_bytes}
-          <button class="toolbar-btn" onclick={onexportpdf}>Export PDF</button>
+          <button class="toolbar-btn" onclick={onexportpdf} disabled={isStillProcessing}>Export PDF</button>
         {/if}
       </div>
     </div>
+
+    {#if isStillProcessing}
+      <div class="processing-banner">
+        <div class="banner-spinner"></div>
+        <span>Processing — {uploadProgress?.stage}...</span>
+      </div>
+    {/if}
+
+    {#if isError}
+      <div class="error-banner">
+        <PixelIcon name="alert" size={16} />
+        <span class="error-banner-text">{uploadProgress?.error ?? 'An error occurred'}</span>
+        {#if onretry}
+          <button class="retry-btn" onclick={onretry}>Retry</button>
+        {/if}
+      </div>
+    {/if}
 
     {#if viewMode === 'original'}
       <div class="entity-legend">
@@ -283,7 +317,14 @@
       </div>
     {/if}
 
-    {#if viewMode === 'masked'}
+    {#if isStillProcessing && !selectedItem.masked_content}
+      <div class="viewer-content viewer-loading">
+        <div class="loading-placeholder">
+          <div class="banner-spinner large"></div>
+          <p>Processing file...</p>
+        </div>
+      </div>
+    {:else if viewMode === 'masked'}
       <div class="viewer-content">{#each splitByPageMarkers(selectedItem.masked_content) as seg}{#if seg.type === 'marker'}<div class="page-marker">{seg.text}</div>{:else}{#each buildMaskedSegments(seg.text, selectedItem.entities) as segment}{#if segment.entity}<span class="entity-highlight masked-obfuscated entity-{segment.entity.entity_type.toLowerCase()}" data-tooltip="{'\u2192'} {segment.entity.original_value}">{segment.text}</span>{:else}{segment.text}{/if}{/each}{/if}{/each}</div>
     {:else}
       <div class="viewer-content">{#each splitByPageMarkers(selectedItem.raw_content) as seg}{#if seg.type === 'marker'}<div class="page-marker">{seg.text}</div>{:else}{#each buildHighlightedSegments(seg.text, getEntitiesForBlock(selectedItem.entities, seg)) as segment}{#if segment.entity}<span class="entity-highlight entity-{segment.entity.entity_type.toLowerCase()}" data-tooltip="{'\u2192'} {segment.entity.token}">{segment.text}</span>{:else}{segment.text}{/if}{/each}{/if}{/each}</div>
@@ -410,6 +451,107 @@
 .toolbar-btn:hover {
   background-color: var(--bg-elevated);
   border-color: var(--border-accent);
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.toggle-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Processing banner */
+.processing-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background-color: rgba(232, 117, 26, 0.12);
+  border-bottom: 1px solid var(--accent-orange);
+  font-size: 13px;
+  color: var(--accent-orange);
+  flex-shrink: 0;
+}
+
+.banner-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent-orange);
+  border-radius: 50%;
+  animation: viewer-spin 0.8s steps(8) infinite;
+  flex-shrink: 0;
+}
+
+.banner-spinner.large {
+  width: 32px;
+  height: 32px;
+  border-width: 3px;
+}
+
+@keyframes viewer-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Error banner */
+.error-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background-color: rgba(239, 68, 68, 0.12);
+  border-bottom: 1px solid var(--accent-red);
+  font-size: 13px;
+  color: var(--accent-red);
+  flex-shrink: 0;
+}
+
+.error-banner-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.retry-btn {
+  padding: 4px 12px;
+  border: 2px solid var(--accent-orange);
+  border-radius: 6px;
+  background: var(--accent-orange);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: 'Geist Pixel', monospace;
+  flex-shrink: 0;
+}
+
+.retry-btn:hover {
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+}
+
+/* Loading placeholder */
+.viewer-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.loading-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.loading-placeholder p {
+  margin: 0;
 }
 
 .entity-legend {

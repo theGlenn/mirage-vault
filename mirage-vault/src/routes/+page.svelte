@@ -3,8 +3,6 @@
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
   import { open } from '@tauri-apps/plugin-dialog';
   import { onMount } from 'svelte';
-  import { detect } from '$lib/detectors';
-  import { mask } from '$lib/masker';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import type { ActiveView } from '$lib/components/Sidebar.svelte';
   import FileBrowser from '$lib/components/FileBrowser.svelte';
@@ -16,6 +14,9 @@
   import SettingsScreen from '$lib/components/SettingsScreen.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import { maskWithStrategy } from '$lib/masking';
+  import type { UploadProgress, UploadStage } from '$lib/types/upload';
+  import { STAGE_PROGRESS, generateTrackingId } from '$lib/types/upload';
+  import { logger } from '$lib/logging';
 
   const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.csv', '.json', '.pdf'];
 
@@ -26,7 +27,7 @@
   let viewMode: 'masked' | 'original' = $state('masked');
   let dragOver = $state(false);
   let errorMessage = $state('');
-  let processing = $state(false);
+  let uploadStates: Map<string, UploadProgress> = $state(new Map());
   let pasteText = $state('');
   let pasteProcessing = $state(false);
   let searchQuery = $state('');
@@ -39,34 +40,67 @@
       : items
   );
 
-  
+  // --- Upload state helpers ---
+
+  function updateUploadState(trackingId: string, updates: Partial<UploadProgress>) {
+    const current = uploadStates.get(trackingId);
+    if (!current) return;
+    const updated = { ...current, ...updates };
+    // Auto-set progress from stage if stage changed
+    if (updates.stage && updates.stage !== 'error' && updates.progress === undefined) {
+      updated.progress = STAGE_PROGRESS[updates.stage];
+    }
+    const next = new Map(uploadStates);
+    next.set(trackingId, updated);
+    uploadStates = next;
+  }
+
+  function removeUploadState(trackingId: string) {
+    const next = new Map(uploadStates);
+    next.delete(trackingId);
+    uploadStates = next;
+  }
+
+  function createUploadEntry(opts: {
+    filePath: string;
+    fileName: string;
+    fileType: string;
+    isPaste?: boolean;
+  }): string {
+    const trackingId = generateTrackingId();
+    const entry: UploadProgress = {
+      trackingId,
+      filePath: opts.filePath,
+      fileName: opts.fileName,
+      fileType: opts.fileType,
+      stage: 'drag',
+      progress: STAGE_PROGRESS.drag,
+      itemId: null,
+      error: null,
+      errorStage: null,
+      rawContent: null,
+      rawPdfBytes: null,
+      startedAt: Date.now(),
+      isPaste: opts.isPaste ?? false,
+    };
+    const next = new Map(uploadStates);
+    next.set(trackingId, entry);
+    uploadStates = next;
+    return trackingId;
+  }
+
+  function getUploadForSelectedItem(): UploadProgress | undefined {
+    if (selectedItemId == null) return undefined;
+    return Array.from(uploadStates.values()).find(u => u.itemId === selectedItemId);
+  }
+
+  // --- Item selection ---
+
   async function selectItem(id: number) {
     selectedItemId = id;
     viewMode = 'masked';
     const item = await invoke<ItemDetail>('get_item', { itemId: id });
-    /*if (extractHashTokenOccurrences(item.masked_content).length > 0) {
-      try {
-        const hashMappings = await invoke<HashMappingOutput[]>('get_hash_mappings', { itemId: id });
-        item.entities = resolveHashEntities(item, hashMappings);
-      } catch (err) {
-        console.warn('Failed to load hash mappings for item:', id, err);
-        item.entities = resolveHashEntities(item, []);
-      }
-    }*/
     selectedItem = item;
-  }
-
-  function formatDate(dateStr: string): string {
-    const date = new Date(dateStr);
-    if (isNaN(date.getTime())) return dateStr;
-    const m = date.getMonth() + 1;
-    const d = date.getDate();
-    const y = date.getFullYear();
-    const h = date.getHours();
-    const min = String(date.getMinutes()).padStart(2, '0');
-    const ampm = h >= 12 ? 'PM' : 'AM';
-    const h12 = h % 12 || 12;
-    return `${m}/${d}/${y} ${h12}:${min} ${ampm}`;
   }
 
   function getExtension(filename: string): string {
@@ -84,93 +118,125 @@
     has_warning: boolean;
   }
 
-  async function ingestFilePath(path: string, name: string) {
-    const ext = getExtension(name).replace('.', '');
-    const text = await invoke<string>('read_file_text', { path });
-    
-    // Use configured masking strategy (NLP or Ollama)
-    const result = await maskWithStrategy(text);
-    
-    const entities = result.mappings.map((m) => ({
+  // --- Helper: build entities array + save hash mappings ---
+
+  async function saveHashMappingsIfNeeded(result: Awaited<ReturnType<typeof maskWithStrategy>>, itemId: number) {
+    if (result.strategy === 'ollama') {
+      const hashMappings = result.mappings
+        .filter((m) => m.hash)
+        .map((m) => ({
+          hash: m.hash!,
+          original: m.original,
+          entity_type: m.type
+        }));
+      if (hashMappings.length > 0) {
+        await invoke('save_hash_mappings', { itemId, mappings: hashMappings });
+      }
+    }
+  }
+
+  function buildEntities(result: Awaited<ReturnType<typeof maskWithStrategy>>) {
+    return result.mappings.map((m) => ({
       entity_type: m.type,
       original_value: m.original,
       token: m.token || m.hash || '[MASKED]',
       span_start: m.start,
       span_end: m.end
     }));
+  }
 
+  // --- Staged ingest: text files ---
+
+  async function ingestFilePath(path: string, name: string, trackingId: string) {
+    const ext = getExtension(name).replace('.', '');
+
+    // Stage: reading
+    updateUploadState(trackingId, { stage: 'reading' });
+    logger.info('Reading file', { trackingId, file: name, stage: 'reading' });
+    const text = await invoke<string>('read_file_text', { path });
+    updateUploadState(trackingId, { rawContent: text });
+
+    // Stage: saving (phase 1 — save raw with status 'processing')
+    updateUploadState(trackingId, { stage: 'saving' });
+    logger.info('Saving to DB', { trackingId, file: name, stage: 'saving' });
     const itemId = await invoke<number>('save_item', {
       name,
       fileType: ext,
       rawContent: text,
-      maskedContent: result.maskedText,
-      entities
+      maskedContent: '',
+      entities: [],
+      status: 'processing'
     });
-    
-    // Save hash mappings if using Ollama (hash-based masking)
-    if (result.strategy === 'ollama') {
-      const hashMappings = result.mappings
-        .filter((m) => m.hash)
-        .map((m) => ({
-          hash: m.hash!,
-          original: m.original,
-          entity_type: m.type
-        }));
-      
-      if (hashMappings.length > 0) {
-        await invoke('save_hash_mappings', {
-          itemId,
-          mappings: hashMappings
-        });
-      }
-    }
+    updateUploadState(trackingId, { itemId });
+    await refreshItems();
+
+    // Stage: processing (phase 2 — mask + update)
+    await runMasking(trackingId, itemId, text, name);
   }
 
-  async function ingestPdfFilePath(path: string, name: string) {
+  // --- Staged ingest: PDF files ---
+
+  async function ingestPdfFilePath(path: string, name: string, trackingId: string) {
+    // Stage: reading
+    updateUploadState(trackingId, { stage: 'reading' });
+    logger.info('Reading PDF', { trackingId, file: name, stage: 'reading' });
     const bytes = await invoke<number[]>('read_file_bytes', { path });
-
     const pdfResult = await invoke<PdfExtractResult>('extract_pdf_text', { content: bytes });
+    updateUploadState(trackingId, { rawContent: pdfResult.text, rawPdfBytes: bytes });
 
-    // Use configured masking strategy (NLP or Ollama)
-    const result = await maskWithStrategy(pdfResult.text);
-
-    const entities = result.mappings.map((m) => ({
-      entity_type: m.type,
-      original_value: m.original,
-      token: m.token || m.hash || '[MASKED]',
-      span_start: m.start,
-      span_end: m.end
-    }));
-
+    // Stage: saving (phase 1)
+    updateUploadState(trackingId, { stage: 'saving' });
+    logger.info('Saving PDF to DB', { trackingId, file: name, stage: 'saving' });
     const itemId = await invoke<number>('save_item', {
       name,
       fileType: 'pdf',
       rawContent: pdfResult.text,
-      maskedContent: result.maskedText,
-      entities,
+      maskedContent: '',
+      entities: [],
+      status: 'processing',
       warning: pdfResult.has_warning ? 'Some pages in this PDF could not be extracted. Results may be incomplete.' : undefined,
       rawPdfBytes: bytes
     });
-    
-    // Save hash mappings if using Ollama (hash-based masking)
-    if (result.strategy === 'ollama') {
-      const hashMappings = result.mappings
-        .filter((m) => m.hash)
-        .map((m) => ({
-          hash: m.hash!,
-          original: m.original,
-          entity_type: m.type
-        }));
-      
-      if (hashMappings.length > 0) {
-        await invoke('save_hash_mappings', {
-          itemId,
-          mappings: hashMappings
-        });
-      }
-    }
+    updateUploadState(trackingId, { itemId });
+    await refreshItems();
+
+    // Stage: processing (phase 2)
+    await runMasking(trackingId, itemId, pdfResult.text, name);
   }
 
+  // --- Shared masking phase (phase 2) ---
+
+  async function runMasking(trackingId: string, itemId: number, text: string, name: string) {
+    updateUploadState(trackingId, { stage: 'processing' });
+    logger.info('Running masking', { trackingId, file: name, stage: 'processing', itemId });
+
+    const result = await maskWithStrategy(text);
+    const entities = buildEntities(result);
+
+    await invoke('update_item_masking', {
+      itemId,
+      maskedContent: result.maskedText,
+      entities,
+      status: 'done'
+    });
+
+    await saveHashMappingsIfNeeded(result, itemId);
+
+    // Done
+    updateUploadState(trackingId, { stage: 'done' });
+    logger.info('Upload complete', { trackingId, file: name, stage: 'done', itemId });
+    await refreshItems();
+
+    // Re-fetch selected item if it was this one
+    if (selectedItemId === itemId) {
+      selectedItem = await invoke<ItemDetail>('get_item', { itemId });
+    }
+
+    // Clean up after a brief delay so user sees the 100% state
+    setTimeout(() => removeUploadState(trackingId), 1500);
+  }
+
+  // --- File selection dialog ---
 
   async function selectFiles() {
     try {
@@ -183,70 +249,71 @@
           }
         ]
       });
-      
+
       if (selected && selected.length > 0) {
-        console.log('Selected files:', selected);
+        logger.info('Files selected via dialog', { file: selected.join(', ') });
         await handleFileDrop(selected);
       }
     } catch (err) {
-      console.error('Failed to select files:', err);
+      logger.error('Failed to select files', { file: String(err) });
       errorMessage = 'Failed to select files: ' + (err instanceof Error ? err.message : String(err));
     }
   }
+
+  // --- Paste submit ---
+
   async function handlePasteSubmit() {
     if (!pasteText.trim()) return;
     errorMessage = '';
     pasteProcessing = true;
-    try {
-      const text = pasteText;
-      const now = new Date();
-      const pad = (n: number) => String(n).padStart(2, '0');
-      const name = `Pasted text - ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
 
-      // Use configured masking strategy (NLP or Ollama)
-      const result = await maskWithStrategy(text);
-      const entities = result.mappings.map((m) => ({
-        entity_type: m.type,
-        original_value: m.original,
-        token: m.token || m.hash || '[MASKED]',
-        span_start: m.start,
-        span_end: m.end
-      }));
+    const text = pasteText;
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const name = `Pasted text - ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+
+    const trackingId = createUploadEntry({
+      filePath: '',
+      fileName: name,
+      fileType: 'txt',
+      isPaste: true,
+    });
+
+    try {
+      // Paste skips reading stage — go straight to saving
+      updateUploadState(trackingId, { stage: 'saving', rawContent: text });
+      logger.info('Saving pasted text', { trackingId, file: name, stage: 'saving' });
 
       const itemId = await invoke<number>('save_item', {
         name,
         fileType: 'txt',
         rawContent: text,
-        maskedContent: result.maskedText,
-        entities
+        maskedContent: '',
+        entities: [],
+        status: 'processing'
       });
-    
-    // Save hash mappings if using Ollama (hash-based masking)
-    if (result.strategy === 'ollama') {
-      const hashMappings = result.mappings
-        .filter((m) => m.hash)
-        .map((m) => ({
-          hash: m.hash!,
-          original: m.original,
-          entity_type: m.type
-        }));
-      
-      if (hashMappings.length > 0) {
-        await invoke('save_hash_mappings', {
-          itemId,
-          mappings: hashMappings
-        });
-      }
-    }
-
-      pasteText = '';
+      updateUploadState(trackingId, { itemId });
       await refreshItems();
+
+      // Masking phase
+      await runMasking(trackingId, itemId, text, name);
+      pasteText = '';
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : 'An error occurred during processing.';
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error('Paste processing failed', { trackingId, file: name, stage: 'error' });
+      const current = uploadStates.get(trackingId);
+      updateUploadState(trackingId, {
+        stage: 'error',
+        error: msg,
+        errorStage: current?.stage ?? 'saving',
+      });
+      errorMessage = msg;
     } finally {
       pasteProcessing = false;
     }
   }
+
+  // --- Clipboard / export ---
 
   async function copyMaskedText() {
     if (!selectedItem) return;
@@ -269,7 +336,6 @@
   async function exportMaskedPdf() {
     if (!selectedItem || selectedItem.file_type !== 'pdf' || !selectedItem.raw_pdf_bytes) return;
 
-    // Build unique replacement pairs from entities
     const seen = new Set<string>();
     const replacements: { original: string; token: string }[] = [];
     for (const e of selectedItem.entities) {
@@ -299,11 +365,20 @@
     }
   }
 
+  // --- Delete / export all ---
+
   let confirmDeleteItem: VaultItem | null = $state(null);
   let exportingAll = $state(false);
 
   async function deleteItem(item: VaultItem) {
     await invoke('delete_item', { itemId: item.id });
+    // Clean up any matching upload state
+    for (const [tid, u] of uploadStates) {
+      if (u.itemId === item.id) {
+        removeUploadState(tid);
+        break;
+      }
+    }
     if (selectedItemId === item.id) {
       selectedItemId = null;
       selectedItem = null;
@@ -336,6 +411,8 @@
     }
   }
 
+  // --- File drop handler (staged, per-file error handling) ---
+
   async function handleFileDrop(paths: string[]) {
     errorMessage = '';
 
@@ -357,28 +434,104 @@
       return;
     }
 
-    processing = true;
-    try {
-      for (const { path, name } of validPaths) {
+    // Create tracking entries for all files upfront (ghost cards)
+    const trackingEntries: { path: string; name: string; trackingId: string }[] = [];
+    for (const { path, name } of validPaths) {
+      const ext = getExtension(name).replace('.', '');
+      const trackingId = createUploadEntry({ filePath: path, fileName: name, fileType: ext });
+      trackingEntries.push({ path, name, trackingId });
+    }
+
+    logger.info(`Processing ${trackingEntries.length} file(s)`, {
+      file: trackingEntries.map(e => e.name).join(', ')
+    });
+
+    // Process sequentially with per-file error handling
+    for (const { path, name, trackingId } of trackingEntries) {
+      try {
         const ext = getExtension(name);
         if (ext === '.pdf') {
-          await ingestPdfFilePath(path, name);
+          await ingestPdfFilePath(path, name, trackingId);
         } else {
-          await ingestFilePath(path, name);
+          await ingestFilePath(path, name, trackingId);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error('File processing failed', { trackingId, file: name, stage: 'error' });
+        const current = uploadStates.get(trackingId);
+        updateUploadState(trackingId, {
+          stage: 'error',
+          error: msg,
+          errorStage: current?.stage ?? 'reading',
+        });
+        // Continue to next file — don't abort
+      }
+    }
+  }
+
+  // --- Retry failed upload ---
+
+  async function retryUpload(trackingId: string) {
+    const upload = uploadStates.get(trackingId);
+    if (!upload || upload.stage !== 'error') return;
+
+    logger.info('Retrying upload', { trackingId, file: upload.fileName, stage: upload.errorStage ?? 'unknown' });
+
+    // Clear error state
+    updateUploadState(trackingId, { stage: 'reading', error: null, errorStage: null });
+
+    try {
+      if (upload.itemId != null && upload.rawContent != null) {
+        // Item already in DB — just retry masking
+        await runMasking(trackingId, upload.itemId, upload.rawContent, upload.fileName);
+      } else if (upload.isPaste && upload.rawContent != null) {
+        // Paste retry — re-save and mask
+        updateUploadState(trackingId, { stage: 'saving' });
+        const itemId = await invoke<number>('save_item', {
+          name: upload.fileName,
+          fileType: upload.fileType,
+          rawContent: upload.rawContent,
+          maskedContent: '',
+          entities: [],
+          status: 'processing'
+        });
+        updateUploadState(trackingId, { itemId });
+        await refreshItems();
+        await runMasking(trackingId, itemId, upload.rawContent, upload.fileName);
+      } else if (upload.filePath) {
+        // Re-ingest from file
+        const ext = getExtension(upload.fileName);
+        if (ext === '.pdf') {
+          await ingestPdfFilePath(upload.filePath, upload.fileName, trackingId);
+        } else {
+          await ingestFilePath(upload.filePath, upload.fileName, trackingId);
         }
       }
-      await refreshItems();
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : 'An error occurred during processing.';
-    } finally {
-      processing = false;
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error('Retry failed', { trackingId, file: upload.fileName });
+      const current = uploadStates.get(trackingId);
+      updateUploadState(trackingId, {
+        stage: 'error',
+        error: msg,
+        errorStage: current?.stage ?? 'reading',
+      });
+    }
+  }
+
+  // --- Retry handler for FileViewer (finds trackingId by selected item) ---
+
+  function handleRetry() {
+    const upload = getUploadForSelectedItem();
+    if (upload) {
+      retryUpload(upload.trackingId);
     }
   }
 
   // Load items on mount and set up Tauri drag-drop events
   onMount(() => {
     refreshItems().catch(err => {
-      console.error('Failed to refresh items:', err);
+      logger.error('Failed to refresh items', { file: String(err) });
       errorMessage = 'Failed to load vault items: ' + (err instanceof Error ? err.message : String(err));
     });
 
@@ -386,26 +539,26 @@
     let unlisten: (() => void) | undefined;
 
     webview.onDragDropEvent(async (event) => {
-      console.log('Drag-drop event:', event.payload.type);
+      logger.debug('Drag-drop event', { stage: event.payload.type });
       if (event.payload.type === 'enter') {
         dragOver = true;
       } else if (event.payload.type === 'leave') {
         dragOver = false;
       } else if (event.payload.type === 'drop') {
         dragOver = false;
-        console.log('Files dropped:', event.payload.paths);
+        logger.info('Files dropped', { file: event.payload.paths.join(', ') });
         try {
           await handleFileDrop(event.payload.paths);
         } catch (err) {
-          console.error('Failed to handle file drop:', err);
+          logger.error('Failed to handle file drop', { file: String(err) });
           errorMessage = 'Failed to process files: ' + (err instanceof Error ? err.message : String(err));
         }
       }
-    }).then(fn => { 
-      unlisten = fn; 
-      console.log('Drag-drop listener registered');
+    }).then(fn => {
+      unlisten = fn;
+      logger.info('Drag-drop listener registered');
     }).catch(err => {
-      console.error('Failed to register drag-drop listener:', err);
+      logger.error('Failed to register drag-drop listener', { file: String(err) });
       errorMessage = 'Failed to initialize drag-drop: ' + (err instanceof Error ? err.message : String(err));
     });
 
@@ -432,16 +585,18 @@
         <FileViewer
           {selectedItem}
           {viewMode}
+          uploadProgress={getUploadForSelectedItem()}
           onclose={() => { selectedItemId = null; selectedItem = null; }}
           oncopy={copyMaskedText}
           onexport={exportFile}
           onexportpdf={exportMaskedPdf}
           ontoggleviewmode={(mode) => viewMode = mode}
+          onretry={handleRetry}
         />
       {/if}
       <FileBrowser
         items={filteredItems}
-        {processing}
+        {uploadStates}
         {errorMessage}
         {dragOver}
         bind:pasteText

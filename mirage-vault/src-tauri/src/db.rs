@@ -52,6 +52,7 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, Box<dyn std::error::Error>
     let migrations = [
         "ALTER TABLE items ADD COLUMN warning TEXT",
         "ALTER TABLE items ADD COLUMN raw_pdf_bytes BLOB",
+        "ALTER TABLE items ADD COLUMN status TEXT NOT NULL DEFAULT 'done'",
     ];
     for sql in &migrations {
         match conn.execute_batch(sql) {
