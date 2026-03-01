@@ -54,7 +54,7 @@ export interface LLMVerificationResult {
 
 const DEFAULT_CONFIG: OllamaConfig = {
   baseUrl: 'http://localhost:11434',
-  model: 'ministral',
+  model: 'ministral-3:3b',
   timeoutMs: 30000,
 };
 

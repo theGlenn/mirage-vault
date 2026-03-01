@@ -6,7 +6,7 @@
   let settings: LlmSettings = $state({
     enabled: false,
     baseUrl: 'http://localhost:11434',
-    model: 'ministral',
+    model: 'ministral-3:3b',
     timeoutMs: 30000,
   });
   
@@ -145,7 +145,7 @@
           might miss, but adds latency to file processing.
         </p>
         <p class="recommended-models">
-          <strong>Recommended models:</strong> ministral, qwen2:0.5b, or similar small models.
+          <strong>Recommended models:</strong> ministral-3:3b, qwen2:0.5b, or similar small models.
         </p>
       </div>
     </div>

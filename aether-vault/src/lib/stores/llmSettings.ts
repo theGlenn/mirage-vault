@@ -10,7 +10,7 @@ export interface LlmSettings {
 const DEFAULT_SETTINGS: LlmSettings = {
   enabled: false,
   baseUrl: 'http://localhost:11434',
-  model: 'ministral',
+  model: 'ministral-3:3b',
   timeoutMs: 30000,
 };
 
