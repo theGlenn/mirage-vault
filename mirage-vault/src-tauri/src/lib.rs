@@ -15,6 +15,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Info)
+                .build(),
+        )
         .setup(|app| {
             let conn = db::init_db(&app.handle())?;
             app.manage(db::DbState(Mutex::new(conn)));
@@ -38,6 +43,7 @@ pub fn run() {
             commands::export_zip,
             commands::save_hash_mappings,
             commands::get_hash_mappings,
+            commands::update_item_masking,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,11 +1,13 @@
 <script lang="ts">
   import PixelIcon from './PixelIcon.svelte';
+  import type { IconName } from './PixelIcon.svelte';
   import FileCard from './FileCard.svelte';
   import type { VaultItem } from './FileCard.svelte';
+  import type { UploadProgress } from '$lib/types/upload';
 
   let {
     items,
-    processing,
+    uploadStates,
     errorMessage,
     dragOver,
     pasteText = $bindable(''),
@@ -18,7 +20,7 @@
     onexportall
   }: {
     items: VaultItem[];
-    processing: boolean;
+    uploadStates: Map<string, UploadProgress>;
     errorMessage: string;
     dragOver: boolean;
     pasteText?: string;
@@ -32,9 +34,43 @@
   } = $props();
 
   let showPastePanel = $state(false);
+
+  let isAnyUploading = $derived(
+    Array.from(uploadStates.values()).some(u => u.stage !== 'done' && u.stage !== 'error')
+  );
+
+  let pendingUploads = $derived(
+    Array.from(uploadStates.values()).filter(u => u.itemId === null && u.stage !== 'done')
+  );
+
+  function getUploadForItem(itemId: number): UploadProgress | undefined {
+    return Array.from(uploadStates.values()).find(u => u.itemId === itemId);
+  }
+
+  function getFileTypeColor(fileType: string): string {
+    switch (fileType) {
+      case 'txt': return 'var(--filetype-txt)';
+      case 'pdf': return 'var(--filetype-pdf)';
+      case 'csv': return 'var(--filetype-csv)';
+      case 'json': return 'var(--filetype-json)';
+      case 'md': return 'var(--filetype-md)';
+      default: return 'var(--text-secondary)';
+    }
+  }
+
+  function getFileIcon(fileType: string): IconName {
+    switch (fileType) {
+      case 'txt': return 'file';
+      case 'pdf': return 'file-alt';
+      case 'csv': return 'table';
+      case 'json': return 'code';
+      case 'md': return 'article';
+      default: return 'file';
+    }
+  }
 </script>
 
-{#if items.length === 0}
+{#if items.length === 0 && pendingUploads.length === 0}
   <div
     class="drop-zone"
     class:drop-zone-active={dragOver}
@@ -44,14 +80,14 @@
     <div class="drop-zone-icon">
       <PixelIcon name="upload" size={48} />
     </div>
-    {#if processing}
+    {#if isAnyUploading}
       <div class="loading-spinner"></div>
       <p class="drop-zone-text">Processing files...</p>
     {:else}
       <p class="drop-zone-text">Drop .txt .md .csv .json or .pdf files here</p>
     {/if}
-    <button class="action-btn" onclick={onselectfiles} disabled={processing}>
-      {processing ? 'Processing...' : 'Select Files'}
+    <button class="action-btn" onclick={onselectfiles} disabled={isAnyUploading}>
+      {isAnyUploading ? 'Processing...' : 'Select Files'}
     </button>
 
     <div class="paste-divider">or paste text</div>
@@ -85,11 +121,11 @@
   <div class="file-browser" class:file-browser-dragover={dragOver}>
     <div class="toolbar">
       <div class="toolbar-left">
-        <button class="toolbar-btn" onclick={onselectfiles} disabled={processing}>
+        <button class="toolbar-btn" onclick={onselectfiles} disabled={isAnyUploading}>
           <PixelIcon name="upload" size={16} />
           <span>Select Files</span>
         </button>
-        <button class="toolbar-btn" onclick={() => showPastePanel = !showPastePanel} disabled={processing}>
+        <button class="toolbar-btn" onclick={() => showPastePanel = !showPastePanel} disabled={isAnyUploading}>
           <PixelIcon name="clipboard" size={16} />
           <span>Paste Text</span>
         </button>
@@ -124,16 +160,39 @@
         </div>
       </div>
     {/if}
-    {#if processing}
+    {#if isAnyUploading}
       <div class="processing-overlay">
         <div class="loading-spinner"></div>
-        <p class="processing-text">Processing files...</p>
+        <p class="processing-text">
+          Processing {Array.from(uploadStates.values()).filter(u => u.stage !== 'done' && u.stage !== 'error').length} file(s)...
+        </p>
       </div>
     {/if}
     <div class="file-grid">
+      {#each pendingUploads as upload (upload.trackingId)}
+        <div class="file-card file-card-pending">
+          <div class="file-card-spinner">
+            <div class="card-loading-spinner"></div>
+          </div>
+          <div class="file-card-icon" style="color: {getFileTypeColor(upload.fileType)}">
+            <PixelIcon name={getFileIcon(upload.fileType)} size={32} />
+          </div>
+          <div class="file-card-name">
+            <span class="file-card-name-text">{upload.fileName}</span>
+          </div>
+          <div class="file-card-meta">
+            <span class="file-card-stage">{upload.stage}...</span>
+            <span class="file-card-type">.{upload.fileType}</span>
+          </div>
+          <div class="file-card-progress-track">
+            <div class="file-card-progress-fill" style="width: {upload.progress}%"></div>
+          </div>
+        </div>
+      {/each}
       {#each items as item (item.id)}
         <FileCard
           {item}
+          uploadProgress={getUploadForItem(item.id)}
           onselect={onselectfile}
           ondelete={ondeletefile}
         />
@@ -397,5 +456,100 @@
   padding: 12px 20px;
   font-size: 13px;
   color: var(--accent-red);
+}
+
+/* Pending upload ghost cards */
+.file-card-pending {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  padding-left: 14px;
+  background: var(--bg-surface);
+  border: 2px solid var(--border);
+  border-left: 4px solid var(--accent-orange);
+  border-radius: 8px;
+  cursor: default;
+  opacity: 0.7;
+  text-align: left;
+  width: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+.file-card-pending .file-card-spinner {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+.file-card-pending .card-loading-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent-orange);
+  border-radius: 50%;
+  animation: spin 0.8s steps(8) infinite;
+}
+
+.file-card-pending .file-card-icon {
+  color: var(--text-secondary);
+}
+
+.file-card-pending .file-card-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.file-card-pending .file-card-name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-card-pending .file-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.file-card-pending .file-card-stage {
+  color: var(--accent-orange);
+  font-weight: 500;
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.file-card-pending .file-card-type {
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-elevated);
+}
+
+.file-card-pending .file-card-progress-track {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--bg-elevated);
+  border-radius: 0 0 6px 6px;
+  overflow: hidden;
+}
+
+.file-card-pending .file-card-progress-fill {
+  height: 100%;
+  background: var(--accent-orange);
+  transition: width 0.4s ease;
+  border-radius: 0 0 6px 6px;
 }
 </style>

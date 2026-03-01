@@ -38,6 +38,13 @@
 	--accent-red: #D94E1F;
 	--accent-deep: #C0392B;
 
+	/* Design system palette */
+	--color-green: rgb(118, 242, 34);
+	--color-orange: oklch(0.6639 0.2147 37.25);
+	--color-purple: oklch(0.7435 0.15965 301.951);
+	--color-grim-blue: oklch(0.6067 0.0639 216.52);
+	--color-pale-yellow: oklch(0.7397 0.1464 88.05);
+
 	/* Text */
 	--text-primary: #F6F6F6;
 	--text-secondary: #999999;
@@ -75,6 +82,13 @@
 	--accent-orange: #C5611A;
 	--accent-red: #B8431A;
 	--accent-deep: #A22E1F;
+
+	/* Design system palette */
+	--color-green: rgb(118, 242, 34);
+	--color-orange: oklch(0.6639 0.2147 37.25);
+	--color-purple: oklch(0.7435 0.15965 301.951);
+	--color-grim-blue: oklch(0.6067 0.0639 216.52);
+	--color-pale-yellow: oklch(0.7397 0.1464 88.05);
 
 	/* Text */
 	--text-primary: #1A1A1A;

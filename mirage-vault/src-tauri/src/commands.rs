@@ -25,6 +25,7 @@ pub struct ItemSummary {
     pub entity_count: i64,
     pub created_at: String,
     pub warning: Option<String>,
+    pub status: String,
 }
 
 #[derive(Serialize)]
@@ -94,8 +95,12 @@ pub fn save_item(
     entities: Vec<EntityInput>,
     warning: Option<String>,
     raw_pdf_bytes: Option<Vec<u8>>,
+    status: Option<String>,
 ) -> Result<i64, String> {
+    let item_status = status.unwrap_or_else(|| "done".to_string());
     let conn = db.0.lock().map_err(|e| e.to_string())?;
+
+    log::info!("save_item: name={}, file_type={}, status={}", name, file_type, item_status);
 
     // Encrypt raw content before storing
     let encrypted_content = if crypto::is_key_set() {
@@ -106,8 +111,8 @@ pub fn save_item(
     };
 
     conn.execute(
-        "INSERT INTO items (name, file_type, raw_content, masked_content, warning, raw_pdf_bytes) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        rusqlite::params![name, file_type, encrypted_content, masked_content, warning, raw_pdf_bytes],
+        "INSERT INTO items (name, file_type, raw_content, masked_content, warning, raw_pdf_bytes, status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        rusqlite::params![name, file_type, encrypted_content, masked_content, warning, raw_pdf_bytes, item_status],
     )
     .map_err(|e| e.to_string())?;
 
@@ -143,16 +148,18 @@ pub fn update_item_masking(
     item_id: i64,
     masked_content: String,
     entities: Vec<EntityInput>,
+    status: Option<String>,
 ) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let item_status = status.unwrap_or_else(|| "done".to_string());
 
     conn.execute_batch("BEGIN TRANSACTION;")
         .map_err(|e| e.to_string())?;
 
     let updated = conn
         .execute(
-            "UPDATE items SET masked_content = ?1 WHERE id = ?2",
-            rusqlite::params![masked_content, item_id],
+            "UPDATE items SET masked_content = ?1, status = ?2 WHERE id = ?3",
+            rusqlite::params![masked_content, item_status, item_id],
         )
         .map_err(|e| {
             let _ = conn.execute_batch("ROLLBACK;");
@@ -236,7 +243,7 @@ pub fn list_items(db: State<'_, DbState>) -> Result<Vec<ItemSummary>, String> {
 
     let mut stmt = conn
         .prepare(
-            "SELECT i.id, i.name, i.file_type, COUNT(e.id) AS entity_count, i.created_at, i.warning
+            "SELECT i.id, i.name, i.file_type, COUNT(e.id) AS entity_count, i.created_at, i.warning, i.status
              FROM items i
              LEFT JOIN entities e ON e.item_id = i.id
              GROUP BY i.id
@@ -253,6 +260,7 @@ pub fn list_items(db: State<'_, DbState>) -> Result<Vec<ItemSummary>, String> {
                 entity_count: row.get(3)?,
                 created_at: row.get(4)?,
                 warning: row.get(5)?,
+                status: row.get(6)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -680,6 +688,6 @@ pub fn get_hash_mappings(
     for mapping in mappings {
         result.push(mapping.map_err(|e| e.to_string())?);
     }
-    
+
     Ok(result)
 }
