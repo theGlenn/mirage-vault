@@ -48,15 +48,19 @@ export {
 } from './hashMasking';
 
 export type {
-  // Types
+  // Types from detector
+  DetectionOptions,
+  HybridDetectionResult,
+} from './detector';
+
+export type {
+  // Types from ollama
   DetectedEntity,
   LLMVerificationResult,
   OllamaConfig,
   OllamaGenerateRequest,
   OllamaGenerateResponse,
-  DetectionOptions,
-  HybridDetectionResult,
-} from './detector';
+} from './ollama';
 
 export type {
   // Hash masking types

@@ -23,13 +23,13 @@ Guidelines for AI agents (Claude Code, Cursor, Copilot, etc.) operating in this 
 - No new runtime dependencies in `extension/` without discussion. Bundle size is critical (~680KB from compromise.js alone).
 - Use Node.js built-in `node:test` and `node:assert/strict` for tests. No Jest, no Mocha.
 - No external API calls for entity detection. All NLP/regex processing runs locally.
-- Keep `src/shared/` (future `@aether-shroud/core`) free of platform-specific imports (no `chrome.*`, no `window.*`, no Node.js-only APIs).
+- Keep `src/shared/` (future `@mirage-shroud/core`) free of platform-specific imports (no `chrome.*`, no `window.*`, no Node.js-only APIs).
 
 ### Architecture awareness
 
-- The `extension/src/shared/` directory is the embryo of `@aether-shroud/core`. Code here must work in both browser and Node.js contexts.
+- The `extension/src/shared/` directory is the embryo of `@mirage-shroud/core`. Code here must work in both browser and Node.js contexts.
 - The extension uses a message-passing architecture: content script <-> background service worker <-> popup. Changes to message types in `src/shared/types.ts` affect all three.
-- The Vault app (aether-vault/) uses Tauri v2: Svelte 5 frontend in a webview, Rust backend for filesystem/crypto/SQLite. Masking logic should run in the frontend (TypeScript), not in Rust.
+- The Vault app (mirage-vault/) uses Tauri v2: Svelte 5 frontend in a webview, Rust backend for filesystem/crypto/SQLite. Masking logic should run in the frontend (TypeScript), not in Rust.
 
 ### What NOT to do
 
@@ -56,13 +56,13 @@ The extension targets Chrome 114+. Build output goes to `extension/dist/`. Load 
 ### Working with the Vault app
 
 ```bash
-cd aether-vault
+cd mirage-vault
 pnpm install
 pnpm tauri dev      # launch Tauri dev window (Vite HMR + Rust rebuild)
 pnpm check          # svelte-check + TypeScript
 ```
 
-Rust backend is in `aether-vault/src-tauri/`. Frontend is standard SvelteKit with static adapter.
+Rust backend is in `mirage-vault/src-tauri/`. Frontend is standard SvelteKit with static adapter.
 
 ### Working with design files
 
@@ -84,6 +84,6 @@ Design assets live in `design/`. The `vault.pen` file contains UI designs for th
 4. Run tests. Run the demo (`pnpm run demo`) to visually verify.
 
 ### Adding a Tauri command
-1. Define the command in `aether-vault/src-tauri/src/lib.rs` or a new module.
+1. Define the command in `mirage-vault/src-tauri/src/lib.rs` or a new module.
 2. Register it in the Tauri builder's `invoke_handler`.
 3. Call it from the Svelte frontend via `@tauri-apps/api/core`.

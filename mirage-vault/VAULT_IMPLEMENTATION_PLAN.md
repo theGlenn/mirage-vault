@@ -1,13 +1,13 @@
-# Aether Vault Implementation Plan
+# Mirage Vault Implementation Plan
 
-> Incremental implementation roadmap for the Aether Vault desktop application (Tauri + SvelteKit).
+> Incremental implementation roadmap for the Mirage Vault desktop application (Tauri + SvelteKit).
 > This document tracks progress through small, testable milestones.
 
 ## Overview
 
 The Vault app is a local-first, privacy-focused desktop application that:
 - Stores sensitive documents encrypted at rest (SQLite + AES-256-GCM)
-- Applies reversible masking using `@aether-shroud/core`
+- Applies reversible masking using `@mirage-shroud/core`
 - Provides masked/unmasked views
 - Exports redacted content
 - Acts as a backend for the browser extension
@@ -32,7 +32,7 @@ The Vault app is a local-first, privacy-focused desktop application that:
 
 **Verification**:
 ```bash
-cd aether-vault/src-tauri
+cd mirage-vault/src-tauri
 cargo test db:: --nocapture
 # Should see: "Database initialized successfully"
 ```
@@ -151,7 +151,7 @@ cargo test repository:: --nocapture
 
 **Goal**: Ingest files, detect entities, store masked versions.
 
-### M2.1: Integrate @aether-shroud/core into vault app
+### M2.1: Integrate @mirage-shroud/core into vault app
 **Status**: ⬜ Not Started  
 **Estimated**: 1-2 hours  
 **Testable Output**: Can call `SessionCodec` from Svelte
@@ -159,7 +159,7 @@ cargo test repository:: --nocapture
 **Tasks**:
 - [ ] Add workspace dependency in vault's `package.json`:
   ```json
-  "@aether-shroud/core": "workspace:*"
+  "@mirage-shroud/core": "workspace:*"
   ```
 - [ ] Run `pnpm install` to link
 - [ ] Create test component that masks sample text
@@ -167,7 +167,7 @@ cargo test repository:: --nocapture
 
 **Verification**:
 ```bash
-cd aether-vault
+cd mirage-vault
 pnpm dev
 # In browser console, should be able to:
 # const codec = new SessionCodec({ strategy: 'STRUCTURE_PRESERVING' });
@@ -568,7 +568,7 @@ cargo test
 
 ### Unit Tests (TypeScript)
 ```bash
-cd aether-vault
+cd mirage-vault
 pnpm test
 ```
 
@@ -654,7 +654,7 @@ thiserror = "1"
 ```json
 {
   "dependencies": {
-    "@aether-shroud/core": "workspace:*",
+    "@mirage-shroud/core": "workspace:*",
     "pdf-parse": "^1.1.1",
     "jszip": "^3.10.1"
   },

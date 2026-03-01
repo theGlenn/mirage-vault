@@ -1,4 +1,4 @@
-# Aether Shroud - Brainstorming Document
+# Mirage Shroud - Brainstorming Document
 
 > Async working document between contributors.
 > Add your thoughts, questions, and counter-proposals inline or at the bottom.
@@ -98,7 +98,7 @@ Developers copy-paste code with secrets into LLMs constantly. This is a fast pat
 The extension is a constrained environment (bundle size, cold starts, no filesystem, no background persistence). A companion app removes these constraints. Both should share a single core.
 
 ```
-@aether-shroud/core (pure TS, zero platform deps)
+@mirage-shroud/core (pure TS, zero platform deps)
 ├── detectors/        (regex, NLP, semantic - pluggable)
 ├── strategies/       (token, structure-preserving, generalize, noise)
 ├── policy/           (rules engine for tiered redaction)
@@ -142,7 +142,7 @@ Where this becomes a product:
 
 Concrete actions, no particular order - pick what unblocks the most thinking:
 
-1. **Extract `@aether-shroud/core`** from `src/shared/` into a standalone workspace package with its own test suite. Zero platform dependencies. This unblocks parallel work on extension vs companion app.
+1. **Extract `@mirage-shroud/core`** from `src/shared/` into a standalone workspace package with its own test suite. Zero platform dependencies. This unblocks parallel work on extension vs companion app.
 
 2. **Prototype structure-preserving substitution** as a second masking strategy. Start with person names (use a synthetic name generator), validate that ChatGPT responses unmask correctly. Measure output quality vs `[[TOKEN]]` approach.
 

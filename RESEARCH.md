@@ -1,4 +1,4 @@
-# Aether Shroud - Research Notes
+# Mirage Shroud - Research Notes
 
 Technical deep-dives on concepts and techniques relevant to privacy-preserving LLM interactions. This is a reference document, not a roadmap. Each section is self-contained.
 

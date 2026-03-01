@@ -1,5 +1,5 @@
 {
-  "project": "Aether Vault",
+  "project": "Mirage Vault",
   "branchName": "ralph/pdf-support",
   "description": "Phase 1b - PDF Support: Add PDF file ingestion to the Vault app using lopdf for Rust-side text extraction. PDFs flow through the existing detection and masking pipeline. Includes page markers, extraction warnings, .txt export, and experimental masked PDF export.",
   "userStories": [

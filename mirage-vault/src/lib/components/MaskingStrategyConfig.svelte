@@ -294,12 +294,14 @@
 
 <style>
   .masking-config {
-    padding: 16px;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 12px;
   }
 
   .strategy-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    grid-template-columns: 1fr;
     gap: 16px;
     margin-bottom: 20px;
   }
@@ -307,7 +309,7 @@
   .strategy-card {
     display: flex;
     flex-direction: column;
-    padding: 16px;
+    padding: 12px;
     border: 2px solid #e0e0e0;
     border-radius: 12px;
     background: white;
@@ -406,7 +408,7 @@
 
   .hybrid-section {
     margin: 20px 0;
-    padding: 16px;
+    padding: 12px;
     background: #f5f5f5;
     border-radius: 8px;
   }
@@ -451,7 +453,7 @@
 
   .details-panel {
     margin-top: 16px;
-    padding: 16px;
+    padding: 12px;
     border: 1px solid #e0e0e0;
     border-radius: 8px;
     background: #fafafa;

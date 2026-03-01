@@ -40,7 +40,7 @@ function parseCliOptions(argv: string[]): CliOptions {
 }
 
 function printUsageAndExit(): never {
-  console.log("AETHER SHROUD Demo");
+  console.log("MIRAGE SHROUD Demo");
   console.log("");
   console.log("Usage:");
   console.log("  npm run demo");

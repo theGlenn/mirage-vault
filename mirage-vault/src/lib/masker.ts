@@ -2,6 +2,7 @@ import type { Detection, EntityType } from './detectors/types';
 
 export interface Mapping {
 	token: string;
+	hash: string;
 	original: string;
 	type: EntityType;
 	start: number;
@@ -11,20 +12,23 @@ export interface Mapping {
 export interface MaskResult {
 	maskedText: string;
 	mappings: Mapping[];
+	hashMappings: Map<string, string>;
 }
 
-/**
- * Replace detected entities with [[TYPE_N]] tokens.
- *
- * - Counter increments per type (first email → [[EMAIL_1]], second → [[EMAIL_2]]).
- * - Same entity value appearing multiple times maps to the same token.
- * - Already-tokenized patterns ([[...]]) are never re-detected, making masking idempotent.
- *
- * Detections must be non-overlapping and sorted by start ascending (as returned by detect()).
- */
+function generateHash(text: string): string {
+	let hash = 0;
+	for (let i = 0; i < text.length; i++) {
+		const char = text.charCodeAt(i);
+		hash = ((hash << 5) - hash) + char;
+		hash = hash & hash;
+	}
+
+	return Math.abs(hash).toString(16).padStart(8, '0').substring(0, 8);
+}
+
 export function mask(text: string, detections: Detection[]): MaskResult {
-	const counters = new Map<EntityType, number>();
-	const valueToToken = new Map<string, string>();
+	const valueToHash = new Map<string, string>();
+	const hashMappings = new Map<string, string>();
 	const mappings: Mapping[] = [];
 
 	// Sort by start ascending to process left-to-right
@@ -37,19 +41,20 @@ export function mask(text: string, detections: Detection[]): MaskResult {
 		// Append text between previous detection and this one
 		result += text.slice(cursor, det.start);
 
-		const key = `${det.type}::${det.value}`;
-		let token = valueToToken.get(key);
+		let hash = valueToHash.get(det.value);
 
-		if (!token) {
-			const count = (counters.get(det.type) ?? 0) + 1;
-			counters.set(det.type, count);
-			token = `[[${det.type}_${count}]]`;
-			valueToToken.set(key, token);
+		if (!hash) {
+			hash = generateHash(det.value);
+			valueToHash.set(det.value, hash);
+			hashMappings.set(hash, det.value);
 		}
+
+		const token = `[[${det.type}:${hash}]]`;
 
 		result += token;
 		mappings.push({
 			token,
+			hash,
 			original: det.value,
 			type: det.type,
 			start: det.start,
@@ -62,5 +67,5 @@ export function mask(text: string, detections: Detection[]): MaskResult {
 	// Append remaining text
 	result += text.slice(cursor);
 
-	return { maskedText: result, mappings };
+	return { maskedText: result, mappings, hashMappings };
 }

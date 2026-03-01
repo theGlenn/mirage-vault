@@ -18,10 +18,10 @@ import {
 } from "./detector";
 import { debugError, debugLog, debugWarn } from "../shared/debug";
 
-const CUE_ID = "aether-shroud-cue";
-const STYLE_ID = "aether-shroud-style";
-const MISTRAL_BRIDGE_REQ_SOURCE = "aether-shroud-mistral-page";
-const MISTRAL_BRIDGE_RES_SOURCE = "aether-shroud-mistral-content";
+const CUE_ID = "mirage-shroud-cue";
+const STYLE_ID = "mirage-shroud-style";
+const MISTRAL_BRIDGE_REQ_SOURCE = "mirage-shroud-mistral-page";
+const MISTRAL_BRIDGE_RES_SOURCE = "mirage-shroud-mistral-content";
 
 let enabled = true;
 let maskedCount = 0;
@@ -84,7 +84,7 @@ function ensureStyle() {
       opacity: 1;
       transform: translateY(0);
     }
-    [data-aether-shroud-flagged="true"] {
+    [data-mirage-shroud-flagged="true"] {
       box-shadow: 0 0 0 2px rgba(15,118,110,0.2) inset !important;
       border-radius: 10px;
     }
@@ -161,9 +161,9 @@ function getCueElement(): HTMLDivElement {
 }
 
 function clearComposerFlags() {
-  document.querySelectorAll("[data-aether-shroud-flagged='true']").forEach((node) => {
+  document.querySelectorAll("[data-mirage-shroud-flagged='true']").forEach((node) => {
     if (node instanceof HTMLElement) {
-      node.removeAttribute("data-aether-shroud-flagged");
+      node.removeAttribute("data-mirage-shroud-flagged");
     }
   });
 }
@@ -186,12 +186,12 @@ function updateComposerCueNow() {
     return;
   }
 
-  (composer as HTMLElement).setAttribute("data-aether-shroud-flagged", "true");
+  (composer as HTMLElement).setAttribute("data-mirage-shroud-flagged", "true");
   const rect = (composer as HTMLElement).getBoundingClientRect();
   cue.style.left = `${Math.max(8, rect.left)}px`;
   cue.style.top = `${Math.min(window.innerHeight - 36, rect.bottom + 6)}px`;
   cue.style.maxWidth = `${Math.max(180, Math.min(420, rect.width))}px`;
-  cue.textContent = `AETHER SHROUD preview: ${detections
+  cue.textContent = `MIRAGE SHROUD preview: ${detections
     .map((d) => `${d.type}:${d.value}`)
     .join(" | ")}${allDetections.length > detections.length ? " | …" : ""}`;
   cue.setAttribute("data-show", "true");

@@ -1,8 +1,8 @@
-# PRD: Aether Vault v1 - Core Redaction Loop
+# PRD: Mirage Vault v1 - Core Redaction Loop
 
 ## Introduction
 
-Aether Vault v1 is a local desktop application that proves the core redaction loop: users drag in text files, the app detects and redacts sensitive data (PII, financial data, secrets), stores files locally with a token-to-original mapping vault, and lets users browse and export masked versions.
+Mirage Vault v1 is a local desktop application that proves the core redaction loop: users drag in text files, the app detects and redacts sensitive data (PII, financial data, secrets), stores files locally with a token-to-original mapping vault, and lets users browse and export masked versions.
 
 This version validates the end-to-end flow — ingest, detect, mask, browse, export — with regex + NLP-based detection. No encryption, no auth, no PDF support. The goal is a working product that demonstrates the privacy layer concept on local files.
 
@@ -207,7 +207,7 @@ This version validates the end-to-end flow — ingest, detect, mask, browse, exp
 - **No encryption at rest** — deferred to a later version. Files are stored as plaintext in SQLite for v1.
 - **No user authentication or passphrase** — the app opens without login.
 - **No PDF support** — deferred to Phase 1b. Only text-based formats.
-- **No `@aether-shroud/core` extraction** — detection and masking logic lives in `aether-vault/` for now.
+- **No `@mirage-shroud/core` extraction** — detection and masking logic lives in `mirage-vault/` for now.
 - **No LLM-assisted detection (Ollama)** — regex + compromise.js only.
 - **No structure-preserving substitution** — token redaction (`[[TYPE_N]]`) only for v1.
 - **No rehydration** — this is a one-way redaction tool for v1. Unmasking happens visually in the browser, not programmatically on export.

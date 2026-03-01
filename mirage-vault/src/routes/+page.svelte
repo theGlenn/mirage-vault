@@ -207,13 +207,31 @@
       span_end: m.end
     }));
 
-    await invoke('save_item', {
+    const itemId = await invoke<number>('save_item', {
       name,
       fileType: ext,
       rawContent: text,
       maskedContent: result.maskedText,
       entities
     });
+    
+    // Save hash mappings if using Ollama (hash-based masking)
+    if (result.strategy === 'ollama') {
+      const hashMappings = result.mappings
+        .filter((m) => m.hash)
+        .map((m) => ({
+          hash: m.hash!,
+          original: m.original,
+          entity_type: m.type
+        }));
+      
+      if (hashMappings.length > 0) {
+        await invoke('save_hash_mappings', {
+          itemId,
+          mappings: hashMappings
+        });
+      }
+    }
   }
 
   async function ingestPdfFilePath(path: string, name: string) {
@@ -232,7 +250,7 @@
       span_end: m.end
     }));
 
-    await invoke('save_item', {
+    const itemId = await invoke<number>('save_item', {
       name,
       fileType: 'pdf',
       rawContent: pdfResult.text,
@@ -241,6 +259,24 @@
       warning: pdfResult.has_warning ? 'Some pages in this PDF could not be extracted. Results may be incomplete.' : undefined,
       rawPdfBytes: bytes
     });
+    
+    // Save hash mappings if using Ollama (hash-based masking)
+    if (result.strategy === 'ollama') {
+      const hashMappings = result.mappings
+        .filter((m) => m.hash)
+        .map((m) => ({
+          hash: m.hash!,
+          original: m.original,
+          entity_type: m.type
+        }));
+      
+      if (hashMappings.length > 0) {
+        await invoke('save_hash_mappings', {
+          itemId,
+          mappings: hashMappings
+        });
+      }
+    }
   }
 
 
@@ -285,13 +321,31 @@
         span_end: m.end
       }));
 
-      await invoke('save_item', {
+      const itemId = await invoke<number>('save_item', {
         name,
         fileType: 'txt',
         rawContent: text,
         maskedContent: result.maskedText,
         entities
       });
+    
+    // Save hash mappings if using Ollama (hash-based masking)
+    if (result.strategy === 'ollama') {
+      const hashMappings = result.mappings
+        .filter((m) => m.hash)
+        .map((m) => ({
+          hash: m.hash!,
+          original: m.original,
+          entity_type: m.type
+        }));
+      
+      if (hashMappings.length > 0) {
+        await invoke('save_hash_mappings', {
+          itemId,
+          mappings: hashMappings
+        });
+      }
+    }
 
       pasteText = '';
       await refreshItems();

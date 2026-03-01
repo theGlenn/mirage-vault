@@ -1,20 +1,20 @@
 declare global {
   interface Window {
-    __aetherMistralFetchBridgeInstalled?: boolean;
+    __mirageMistralFetchBridgeInstalled?: boolean;
   }
 }
 
-const REQ_SOURCE = "aether-shroud-mistral-page";
-const RES_SOURCE = "aether-shroud-mistral-content";
+const REQ_SOURCE = "mirage-shroud-mistral-page";
+const RES_SOURCE = "mirage-shroud-mistral-content";
 const TARGET_HOSTNAME = "chat.mistral.ai";
 const TARGET_PATHNAME = "/api/trpc/message.newChat";
 
 function log(...args: unknown[]) {
-  console.log("[AETHER][mistralBridge]", ...args);
+  console.log("[MIRAGE][mistralBridge]", ...args);
 }
 
 function warn(...args: unknown[]) {
-  console.warn("[AETHER][mistralBridge]", ...args);
+  console.warn("[MIRAGE][mistralBridge]", ...args);
 }
 
 type PendingResolve = (maskedText: string | null) => void;
@@ -51,10 +51,10 @@ function requestMaskText(
 }
 
 function installBridge() {
-  if (window.__aetherMistralFetchBridgeInstalled || window.location.hostname !== TARGET_HOSTNAME) {
+  if (window.__mirageMistralFetchBridgeInstalled || window.location.hostname !== TARGET_HOSTNAME) {
     return;
   }
-  window.__aetherMistralFetchBridgeInstalled = true;
+  window.__mirageMistralFetchBridgeInstalled = true;
   log("installed", { href: window.location.href });
 
   const pending = new Map<number, PendingResolve>();

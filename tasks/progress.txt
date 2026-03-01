@@ -1,8 +1,8 @@
 ## Codebase Patterns
-- Tauri 2 app: Rust backend in `aether-vault/src-tauri/src/`, frontend in `aether-vault/src/`
-- Frontend TypeScript modules live in `aether-vault/src/lib/` (SvelteKit `$lib` alias)
+- Tauri 2 app: Rust backend in `mirage-vault/src-tauri/src/`, frontend in `mirage-vault/src/`
+- Frontend TypeScript modules live in `mirage-vault/src/lib/` (SvelteKit `$lib` alias)
 - `@types/node` is installed for `node:test` and `node:assert` type support
-- Run tests with `npx tsx --test <file>` from the `aether-vault/` directory
+- Run tests with `npx tsx --test <file>` from the `mirage-vault/` directory
 - Detection types defined in `src/lib/detectors/types.ts`: `Detection` interface and `EntityType` union
 - Must `use tauri::Manager;` to access `.manage()` and `.path()` on App/AppHandle
 - Database state uses `Mutex<Connection>` wrapped in a struct: `DbState(pub Mutex<Connection>)`
@@ -11,7 +11,7 @@
 - `detect()` from `$lib/detectors` is the unified entry point for all entity detection — import from `$lib/detectors` (not regex/nlp directly)
 - Toolbar action buttons use `.toolbar-btn` class; add new buttons alongside Copy in the `.viewer-toolbar` (right side via `justify-content: space-between`)
 - Toast notifications: set `toastMessage` state string + `setTimeout` to clear; reuse for any brief user feedback
-- `cargo check` runs from `aether-vault/src-tauri/`
+- `cargo check` runs from `mirage-vault/src-tauri/`
 - Inside `<pre>` tags, Svelte template blocks (`{#each}`, `{#if}`) must be on one line to avoid injecting whitespace
 - compromise `.people()` and `.organizations()` return entity text; use `indexOf()` loop to get positions in source text
 - NLP tests should use `>=` assertions since compromise may detect additional entities beyond expectations
@@ -39,7 +39,7 @@
 - Updated `ItemSummary` and `ItemDetail` structs with `warning: Option<String>` field
 - Updated `save_item` command to accept optional `warning` and `raw_pdf_bytes` parameters
 - Updated `list_items` and `get_item` queries to include the `warning` column
-- Files changed: `aether-vault/src-tauri/src/db.rs`, `aether-vault/src-tauri/src/commands.rs`
+- Files changed: `mirage-vault/src-tauri/src/db.rs`, `mirage-vault/src-tauri/src/commands.rs`
 - **Learnings for future iterations:**
   - SQLite `ALTER TABLE ADD COLUMN` errors with "duplicate column name" if column exists — catch and ignore that specific error string for idempotent migrations
   - `Option<T>` in Tauri command params maps to optional JS args; rusqlite handles `Option<T>` as nullable columns automatically
@@ -51,7 +51,7 @@
 - Created `extract_pdf_text` Tauri command that extracts text from PDF bytes page by page
 - Added `PdfExtractResult` response struct with `text`, `page_count`, `has_warning` fields
 - Registered `extract_pdf_text` in the Tauri builder `generate_handler!`
-- Files changed: `aether-vault/src-tauri/Cargo.toml`, `aether-vault/src-tauri/src/commands.rs`, `aether-vault/src-tauri/src/lib.rs`
+- Files changed: `mirage-vault/src-tauri/Cargo.toml`, `mirage-vault/src-tauri/src/commands.rs`, `mirage-vault/src-tauri/src/lib.rs`
 - **Learnings for future iterations:**
   - `lopdf::Document::load_from()` accepts `impl Read` — use `std::io::Cursor<Vec<u8>>` to wrap bytes
   - `doc.get_pages()` returns `BTreeMap<u32, ObjectId>` — keys are already sorted page numbers
@@ -63,7 +63,7 @@
 - Created `ReplacementPair` serde struct with `original` and `token` String fields
 - Implemented `export_masked_pdf` async Tauri command that loads PDF via lopdf, replaces text per-page, opens native save dialog, and writes the modified PDF
 - Registered `export_masked_pdf` in the Tauri builder `generate_handler!`
-- Files changed: `aether-vault/src-tauri/src/commands.rs`, `aether-vault/src-tauri/src/lib.rs`
+- Files changed: `mirage-vault/src-tauri/src/commands.rs`, `mirage-vault/src-tauri/src/lib.rs`
 - **Learnings for future iterations:**
   - lopdf `replace_text()` signature is `(page_number: u32, text: &str, other_text: &str)` — requires iterating over all pages
   - `replace_text()` can fail on pages with unsupported font encodings — silently ignore per-page errors with `let _ =`
@@ -79,7 +79,7 @@
 - Added `PdfExtractResult` interface to match the Rust response struct
 - Added `warning` field to `VaultItem` and `ItemDetail` interfaces to match backend structs
 - Branched `handleDrop` to route .pdf files through `ingestPdfFile` and other files through `ingestFile`
-- Files changed: `aether-vault/src/routes/+page.svelte`, `tasks/prd.json`
+- Files changed: `mirage-vault/src/routes/+page.svelte`, `tasks/prd.json`
 - **Learnings for future iterations:**
   - PDF bytes are sent to Rust as `Array.from(new Uint8Array(buffer))` — Tauri auto-converts JS number arrays to `Vec<u8>`
   - `readFileAsArrayBuffer` must be a separate helper from `readFileAsText` — PDF files cannot be read as text
@@ -93,7 +93,7 @@
 - Added warning indicator (⚠) next to file name in sidebar for items with warnings
 - Styled for both light mode (amber/yellow background) and dark mode (translucent amber)
 - Non-PDF items and PDFs without warnings show no banner or indicator
-- Files changed: `aether-vault/src/routes/+page.svelte`, `tasks/prd.json`
+- Files changed: `mirage-vault/src/routes/+page.svelte`, `tasks/prd.json`
 - **Learnings for future iterations:**
   - Warning banner placement: insert between entity-legend/toolbar and the `{#if viewMode}` content block so it appears in both view modes
   - `item.warning` is `string | null` — a simple `{#if item.warning}` check handles both null and empty string correctly in Svelte
@@ -108,7 +108,7 @@
 - Entity highlighting in Original view correctly skips page marker regions — entities are filtered per content block with adjusted spans
 - Added `.file-badge-pdf` class for visually distinct red PDF badge in the file list sidebar
 - Added `.page-marker` CSS with light/dark mode support
-- Files changed: `aether-vault/src/routes/+page.svelte`, `tasks/prd.json`
+- Files changed: `mirage-vault/src/routes/+page.svelte`, `tasks/prd.json`
 - **Learnings for future iterations:**
   - Use `\n*` (not `\n?`) in page marker regex to greedily capture all surrounding newlines — the marker div provides its own visual spacing
   - Strip captured newlines from marker text with `.replace(/^\n+|\n+$/g, '')` before displaying
@@ -121,7 +121,7 @@
 - Updated `exportFile()` to pass `'txt'` as `fileExtension` and rename `.pdf` → `.txt` in `fileName` for PDF items
 - Updated `exportAll()` to pass `'txt'` as `fileType` and rename `.pdf` → `.txt` in `name` for PDF items in zip export
 - Clipboard copy already worked for PDF items (copies `masked_content` directly)
-- Files changed: `aether-vault/src/routes/+page.svelte`, `tasks/prd.json`
+- Files changed: `mirage-vault/src/routes/+page.svelte`, `tasks/prd.json`
 - **Learnings for future iterations:**
   - The `export_file` Rust command uses `trim_end_matches(".{ext}")` on the filename — when changing the export extension (e.g., pdf→txt), must also rename the extension in the filename so the trim works correctly
   - Same pattern applies to `export_zip` — both the `name` and `fileType` must be adjusted together for the entry naming to work
@@ -133,7 +133,7 @@
 - Added `raw_pdf_bytes: number[] | null` to frontend `ItemDetail` interface
 - Created `exportMaskedPdf()` function: builds unique replacement pairs from entities, calls `export_masked_pdf` Tauri command, shows success/error toast, falls back to .txt export on error
 - Added "Export PDF (experimental)" button to toolbar, conditionally rendered only for PDF items with `raw_pdf_bytes`
-- Files changed: `aether-vault/src-tauri/src/commands.rs`, `aether-vault/src/routes/+page.svelte`, `tasks/prd.json`
+- Files changed: `mirage-vault/src-tauri/src/commands.rs`, `mirage-vault/src/routes/+page.svelte`, `tasks/prd.json`
 - **Learnings for future iterations:**
   - Rust `Vec<u8>` serialized via serde becomes a JSON array of numbers — the frontend type is `number[]`, not `Uint8Array`
   - When passing bytes back to a Tauri command from JS, the `number[]` from the JSON response can be sent directly — no base64 encoding/decoding needed

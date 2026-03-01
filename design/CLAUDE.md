@@ -4,7 +4,7 @@ Context for working with design assets.
 
 ## What's here
 
-- `vault.pen` - UI designs for the Aether Vault desktop app.
+- `vault.pen` - UI designs for the Mirage Vault desktop app.
 - `inspo/` - Inspiration screenshots for reference.
 
 ## Working with .pen files
@@ -22,7 +22,7 @@ Context for working with design assets.
 
 ## Design context
 
-The Vault app (`aether-vault/`) is built with Tauri + SvelteKit. Designs in `vault.pen` inform the frontend implementation. Key screens to expect:
+The Vault app (`mirage-vault/`) is built with Tauri + SvelteKit. Designs in `vault.pen` inform the frontend implementation. Key screens to expect:
 
 - Drop zone / file ingestion view
 - Vault file browser (masked vs raw toggle)

@@ -1,7 +1,7 @@
 const DEBUG_FLAG = true;
 
 function prefix(scope: string): string {
-  return `[AETHER][${scope}]`;
+  return `[MIRAGE][${scope}]`;
 }
 
 export function debugLog(scope: string, ...args: unknown[]) {

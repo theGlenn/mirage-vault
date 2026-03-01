@@ -1,7 +1,7 @@
 {
-  "project": "Aether Vault",
+  "project": "Mirage Vault",
   "branchName": "ralph/vault-v1",
-  "description": "Aether Vault v1 - Core redaction loop: ingest text files, detect and mask PII with regex + compromise.js, browse masked/raw views, export redacted files. Fully local Tauri desktop app.",
+  "description": "Mirage Vault v1 - Core redaction loop: ingest text files, detect and mask PII with regex + compromise.js, browse masked/raw views, export redacted files. Fully local Tauri desktop app.",
   "userStories": [
     {
       "id": "US-001",

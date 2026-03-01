@@ -1,8 +1,8 @@
 {
-  "name": "aether-shroud-mvp",
+  "name": "mirage-shroud-mvp",
   "version": "0.1.0",
   "private": true,
-  "description": "AETHER SHROUD MVP Chrome extension for reversible anonymization in ChatGPT UI",
+  "description": "MIRAGE SHROUD MVP Chrome extension for reversible anonymization in ChatGPT UI",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/build.mjs --watch",

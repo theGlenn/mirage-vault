@@ -1,10 +1,10 @@
-# Aether Shroud
+# Mirage Shroud
 
 Privacy layer for LLM interactions. Reversible redaction of sensitive data before it reaches cloud AI providers.
 
 ## The problem
 
-Every prompt sent to a cloud LLM is a potential data leak. Users routinely paste names, emails, financial figures, proprietary code, and credentials into ChatGPT, Claude, Mistral, and coding assistants. Aether Shroud intercepts this data, replaces sensitive entities with tokens or synthetic substitutes, and restores original values in the response - so the LLM never sees real PII.
+Every prompt sent to a cloud LLM is a potential data leak. Users routinely paste names, emails, financial figures, proprietary code, and credentials into ChatGPT, Claude, Mistral, and coding assistants. Mirage Shroud intercepts this data, replaces sensitive entities with tokens or synthetic substitutes, and restores original values in the response - so the LLM never sees real PII.
 
 ## How it works
 
@@ -20,9 +20,9 @@ All detection and mapping happens locally. No data leaves the user's machine unm
 ## Repository structure
 
 ```
-aether-shroud-mvp/
+mirage-shroud-mvp/
 ├── extension/       Chrome Extension (MV3, TypeScript)
-├── aether-vault/    Desktop Vault App (Tauri, SvelteKit, Rust)
+├── mirage-vault/    Desktop Vault App (Tauri, SvelteKit, Rust)
 ├── design/          UI designs (.pen files) and inspiration
 ├── ROADMAP.md       Product plan
 ├── RESEARCH.md      Technical research notes
@@ -47,12 +47,12 @@ Load the extension from `extension/dist/` via `chrome://extensions` (Developer m
 
 See [extension/README.md](extension/README.md) for detailed usage, demo walkthrough, and debug logging.
 
-### aether-vault/
+### mirage-vault/
 
 Tauri v2 desktop application for file-level redaction. Drop files and text into a persistent encrypted vault, browse masked/unmasked versions, export redacted copies. Uses SvelteKit for the frontend and Rust for filesystem, SQLite, and encryption.
 
 ```bash
-cd aether-vault
+cd mirage-vault
 pnpm install
 pnpm tauri dev      # launch dev window
 ```

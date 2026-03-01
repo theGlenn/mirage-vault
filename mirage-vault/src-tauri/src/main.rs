@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    aether_vault_lib::run()
+    mirage_vault_lib::run()
 }

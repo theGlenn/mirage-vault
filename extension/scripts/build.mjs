@@ -54,7 +54,7 @@ async function runWatch() {
   await copyStatics();
   const ctx = await context(buildOptions);
   await ctx.watch();
-  console.log("[aether-shroud] Watching for changes...");
+  console.log("[mirage-shroud] Watching for changes...");
 }
 
 if (watchMode) {

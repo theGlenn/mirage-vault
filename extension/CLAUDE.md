@@ -17,7 +17,7 @@ popup (toggle/stats)  <──messages──────────/
 - **Content script** (`src/content/content.ts`): Injected into target pages. Intercepts user submissions, shows entity preview cue, rehydrates tokens in LLM responses via `MutationObserver`.
 - **Background** (`src/background/background.ts`): Message router. Manages per-tab session state and vault.
 - **Vault** (`src/background/vault.ts`): Token-to-original mapping. Handles `maskText` and `rehydrate` operations.
-- **Shared** (`src/shared/`): Entity detection and masking logic. Platform-independent - this will become `@aether-shroud/core`.
+- **Shared** (`src/shared/`): Entity detection and masking logic. Platform-independent - this will become `@mirage-shroud/core`.
 - **Popup** (`src/popup/`): Toggle ON/OFF, displays masked entity count.
 - **Mistral Bridge** (`src/content/mistralBridge.ts`): Runs in `MAIN` world to intercept `window.fetch` for Mistral's API calls. Communicates with content script via `window.postMessage`.
 

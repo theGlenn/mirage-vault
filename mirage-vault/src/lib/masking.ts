@@ -10,9 +10,11 @@
 import { detect } from './detectors';
 import { mask } from './masker';
 import { maskWithLlm } from './llm/hashMasking';
+import { ollamaClient } from './llm/ollama';
 import { maskingConfig, getEffectiveStrategy } from './stores/maskingConfig';
 import { get } from 'svelte/store';
 import type { StrategyConfig } from './stores/maskingConfig';
+import type { EntityType } from './detectors/types';
 
 export interface UnifiedMaskResult {
   maskedText: string;
@@ -32,13 +34,38 @@ export interface UnifiedMaskResult {
   };
 }
 
+const OLLAMA_TYPE_ALIASES: Record<string, string> = {
+  AMOUNT: 'AMT',
+  MONEY: 'AMT',
+  ORGANIZATION: 'ORG',
+  COMPANY: 'ORG',
+};
+
+function normalizeEntityType(type: string): string {
+  const normalized = type.trim().toUpperCase();
+  return OLLAMA_TYPE_ALIASES[normalized] ?? normalized;
+}
+
+function extractEntityTypesByHash(maskedText: string): Map<string, string> {
+  const typesByHash = new Map<string, string>();
+  const tokenPattern = /\[\[([A-Z_]+):([a-z0-9]+)\]\]/gi;
+
+  let match: RegExpExecArray | null;
+  while ((match = tokenPattern.exec(maskedText)) !== null) {
+    const [, type, hash] = match;
+    if (!hash) continue;
+    typesByHash.set(hash.toLowerCase(), normalizeEntityType(type));
+  }
+
+  return typesByHash;
+}
+
 /**
  * Main masking function - uses configured strategy
  */
 export async function maskWithStrategy(text: string): Promise<UnifiedMaskResult> {
   const config = get(maskingConfig);
   const effective = getEffectiveStrategy(config);
-  const startTime = performance.now();
   
   // Strategy: Ollama (full LLM masking)
   if (effective.primary === 'ollama') {
@@ -64,6 +91,7 @@ async function maskWithNlp(text: string): Promise<UnifiedMaskResult> {
   const result = mask(text, detections);
   
   const mappings = result.mappings.map(m => ({
+    hash: m.hash,
     token: m.token,
     original: m.original,
     type: m.type,
@@ -83,6 +111,7 @@ async function maskWithNlp(text: string): Promise<UnifiedMaskResult> {
 
 /**
  * Pure Ollama masking (thorough)
+ * Falls back to NLP if Ollama is unavailable
  */
 async function maskWithOllama(
   text: string, 
@@ -90,12 +119,28 @@ async function maskWithOllama(
 ): Promise<UnifiedMaskResult> {
   const startTime = performance.now();
   
+  // Apply full Ollama config
+  ollamaClient.setConfig({
+    baseUrl: config.ollama.baseUrl,
+    model: config.ollama.model,
+    timeoutMs: config.ollama.timeoutMs,
+  });
+  
+  // Check if Ollama is available
+  const available = await ollamaClient.isAvailable();
+  
+  if (!available) {
+    console.warn('Ollama is not available, falling back to NLP masking');
+    return await maskWithNlp(text);
+  }
+  
   const result = await maskWithLlm(text, config.ollama.useJsonFormat);
+  const typesByHash = extractEntityTypesByHash(result.maskedText);
   
   const mappings = Array.from(result.mappings.entries()).map(([hash, original]) => ({
     hash,
     original,
-    type: 'PII', // Type is embedded in the hash format [[TYPE:HASH]]
+    type: typesByHash.get(hash.toLowerCase()) ?? 'PII',
     start: 0,
     end: 0,
   }));
@@ -123,7 +168,7 @@ async function maskWithHybrid(
   // Step 1: Fast NLP detection
   const nlpStart = performance.now();
   const detections = detect(text);
-  const nlpResult = mask(text, detections);
+  mask(text, detections);
   const nlpMs = performance.now() - nlpStart;
   
   // Convert NLP result to format for LLM refinement
@@ -133,6 +178,13 @@ async function maskWithHybrid(
     start: d.start,
     end: d.end,
   }));
+  
+  // Apply full Ollama config
+  ollamaClient.setConfig({
+    baseUrl: config.ollama.baseUrl,
+    model: config.ollama.model,
+    timeoutMs: config.ollama.timeoutMs,
+  });
   
   // Step 2: LLM verification and enhancement
   const { detectWithLlm } = await import('./llm/detector');
@@ -151,15 +203,16 @@ async function maskWithHybrid(
     : preliminaryEntities;
   
   // Remask with final entity set
+  // Map entities to Detection format (type needs to be EntityType)
   const finalMask = mask(text, finalEntities.map(e => ({
-    type: e.type,
-    value: e.original_value || e.value,
-    start: e.span_start || e.start,
-    end: e.span_end || e.end,
-    token: '',
+    type: e.type as EntityType,
+    value: e.value,
+    start: e.start,
+    end: e.end,
   })));
   
   const mappings = finalMask.mappings.map(m => ({
+    hash: m.hash,
     token: m.token,
     original: m.original,
     type: m.type,

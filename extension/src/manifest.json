@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "AETHER SHROUD",
+  "name": "MIRAGE SHROUD",
   "description": "Reversible anonymization for ChatGPT web UI with session-only in-memory masking.",
   "version": "0.1.0",
   "permissions": ["tabs"],
@@ -8,7 +8,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "AETHER SHROUD",
+    "default_title": "MIRAGE SHROUD",
     "default_popup": "popup.html"
   },
   "content_scripts": [

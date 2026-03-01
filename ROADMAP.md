@@ -1,7 +1,7 @@
-# Aether Shroud - Product Roadmap
+# Mirage Shroud - Product Roadmap
 
 > Implementation plan grounded in the research and brainstorming docs.
-> Two products, one core: a **desktop Vault app** and a **browser extension**, sharing `@aether-shroud/core`.
+> Two products, one core: a **desktop Vault app** and a **browser extension**, sharing `@mirage-shroud/core`.
 
 ---
 
@@ -9,7 +9,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    @aether-shroud/core                      │
+│                    @mirage-shroud/core                      │
 │                  (pure TS, zero platform deps)              │
 │                                                             │
 │  Detectors        Strategies        Vault Interface         │
@@ -62,7 +62,7 @@ The desktop Vault app is the centerpiece. It removes all browser extension const
 - Structure-preserving substitution — requires synthetic name/email/amount generators
 - LLM-assisted detection (Ollama) — requires runtime detection and LLM integration
 - PDF support — requires Rust-side text extraction
-- `@aether-shroud/core` extraction — requires stable interfaces
+- `@mirage-shroud/core` extraction — requires stable interfaces
 
 **What it is**: A local desktop application where users drop sensitive files and text, browse masked/unmasked versions side by side, and export redacted copies.
 
@@ -92,14 +92,14 @@ The desktop Vault app is the centerpiece. It removes all browser extension const
 
 **Tauri specifics**
 - Rust backend for filesystem, SQLite, and encryption. TypeScript frontend (framework TBD - Solid, Svelte, or React based on team preference).
-- `@aether-shroud/core` runs in the frontend webview for masking logic. Rust side handles storage and crypto only.
+- `@mirage-shroud/core` runs in the frontend webview for masking logic. Rust side handles storage and crypto only.
 - Tauri v2 for multi-window support if needed later.
 
 #### Technical Decisions
 
 | Decision | Resolved | Notes |
 |----------|----------|-------|
-| Frontend framework | **Svelte 5** | Already scaffolded in `aether-vault/` |
+| Frontend framework | **Svelte 5** | Already scaffolded in `mirage-vault/` |
 | Storage engine | **SQLite** (`rusqlite`) | Relational queries for cross-file entity search, mature ecosystem |
 | PDF parsing | **`lopdf`** (Rust, pure) | Pure Rust, actively maintained (v0.39.0), has `extract_text()` + `replace_text()` for future masked PDF output. Fallback: `pdfium-render` if extraction quality is insufficient (requires bundling ~20MB PDFium binary per platform). |
 | Encryption at rest | **App-level AES-256-GCM** via Rust `ring` | Per-field encryption of sensitive columns. Key from user passphrase via Argon2. |
@@ -114,7 +114,7 @@ The following items were deferred from Phase 1a to ship the core loop faster. Th
 | 2 | **PDF support (Phase 1b)** | — | Rust-side text extraction via `lopdf`, text-only export of masked content |
 | 3 | **Structure-preserving substitution** | — | Synthetic generators (names, emails, amounts, dates), strategy interface, user-selectable masking mode |
 | 4 | **LLM-assisted detection (Ollama)** | — | Auto-detect Ollama, refinement loop on top of regex + NLP, structured prompting for NER |
-| 5 | **`@aether-shroud/core` extraction** | 1-4 stable | pnpm workspaces, shared package, extension consumes core. Gate for Phase 2 |
+| 5 | **`@mirage-shroud/core` extraction** | 1-4 stable | pnpm workspaces, shared package, extension consumes core. Gate for Phase 2 |
 
 ### 1b. Masking Techniques
 
@@ -122,7 +122,7 @@ This is where the research meets implementation. Phase 1 focuses on getting two 
 
 #### Strategy 1: Token Redaction (current, ported to core)
 
-What exists today in the Chrome extension, extracted into `@aether-shroud/core`:
+What exists today in the Chrome extension, extracted into `@mirage-shroud/core`:
 - Regex detectors: EMAIL, PHONE, AMT.
 - NLP detectors: PERSON, ORG (compromise.js).
 - Output: `[[TYPE_N]]` tokens.
@@ -322,7 +322,7 @@ Step 4 is the tricky part for cloud-based clients. Rehydration options:
 
 ### Core Library Extraction
 
-**Deferred.** Build detection and masking logic directly in `aether-vault/` first. Extract `@aether-shroud/core` once the Vault app works end-to-end and interfaces have stabilized. Target: after Phase 1, before Phase 2 (when the extension needs to share code).
+**Deferred.** Build detection and masking logic directly in `mirage-vault/` first. Extract `@mirage-shroud/core` once the Vault app works end-to-end and interfaces have stabilized. Target: after Phase 1, before Phase 2 (when the extension needs to share code).
 
 Planned package structure when extracted:
 
@@ -350,9 +350,9 @@ packages/
     tests/
     package.json
   extension/
-    (current src/ minus shared/, imports from @aether-shroud/core)
+    (current src/ minus shared/, imports from @mirage-shroud/core)
   vault-app/
-    (Tauri project, imports from @aether-shroud/core)
+    (Tauri project, imports from @mirage-shroud/core)
 ```
 
 Workspace managed via npm/pnpm workspaces or Turborepo.

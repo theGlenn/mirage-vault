@@ -2,7 +2,7 @@
 
 ## Introduction
 
-Extend Aether Vault to accept `.pdf` files alongside the existing text-based formats (`.txt`, `.md`, `.csv`, `.json`). The Rust backend extracts text from PDF files using `lopdf`, sends it to the frontend for detection and masking through the existing pipeline, and stores results in SQLite like any other vault item. Users can browse, toggle masked/raw views, and export masked content as `.txt` or as an experimental masked PDF.
+Extend Mirage Vault to accept `.pdf` files alongside the existing text-based formats (`.txt`, `.md`, `.csv`, `.json`). The Rust backend extracts text from PDF files using `lopdf`, sends it to the frontend for detection and masking through the existing pipeline, and stores results in SQLite like any other vault item. Users can browse, toggle masked/raw views, and export masked content as `.txt` or as an experimental masked PDF.
 
 This builds on the fully functional Phase 1a vault app — drop zone, detection, masking, file browser, entity highlights, and export all exist and work. This feature extends them to handle PDFs.
 

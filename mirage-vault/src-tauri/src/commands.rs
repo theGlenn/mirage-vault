@@ -98,12 +98,19 @@ pub fn save_item(
     let item_id = conn.last_insert_rowid();
 
     for entity in &entities {
+        // Encrypt the original value before storing
+        let encrypted_value = if crypto::is_key_set() {
+            crypto::encrypt(&entity.original_value)?
+        } else {
+            entity.original_value.clone()
+        };
+        
         conn.execute(
             "INSERT INTO entities (item_id, entity_type, original_value, token, span_start, span_end) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             rusqlite::params![
                 item_id,
                 entity.entity_type,
-                entity.original_value,
+                encrypted_value,
                 entity.token,
                 entity.span_start,
                 entity.span_end,
@@ -111,10 +118,8 @@ pub fn save_item(
         )
         .map_err(|e| e.to_string())?;
     }
-
     Ok(item_id)
 }
-
 #[tauri::command]
 pub fn list_items(db: State<'_, DbState>) -> Result<Vec<ItemSummary>, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
@@ -191,10 +196,19 @@ pub fn get_item(db: State<'_, DbState>, item_id: i64) -> Result<ItemDetail, Stri
 
     let entities = stmt
         .query_map(rusqlite::params![item_id], |row| {
+            let encrypted_value: String = row.get(2)?;
+            
+            // Decrypt the original value if encryption is initialized
+            let original_value = if crypto::is_key_set() {
+                crypto::decrypt(&encrypted_value).unwrap_or_else(|_| encrypted_value)
+            } else {
+                encrypted_value
+            };
+            
             Ok(EntityOutput {
                 id: row.get(0)?,
                 entity_type: row.get(1)?,
-                original_value: row.get(2)?,
+                original_value,
                 token: row.get(3)?,
                 span_start: row.get(4)?,
                 span_end: row.get(5)?,

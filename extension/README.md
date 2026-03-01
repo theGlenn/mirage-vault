@@ -1,6 +1,6 @@
-# AETHER SHROUD (MVP Chrome Extension)
+# MIRAGE SHROUD (MVP Chrome Extension)
 
-`AETHER SHROUD` is a Manifest V3 Chrome extension (TypeScript) that performs reversible anonymization in supported web chat UIs (`chat.openai.com`, `chatgpt.com`, and `chat.mistral.ai`) using a session-only in-memory vault stored in the background service worker.
+`MIRAGE SHROUD` is a Manifest V3 Chrome extension (TypeScript) that performs reversible anonymization in supported web chat UIs (`chat.openai.com`, `chatgpt.com`, and `chat.mistral.ai`) using a session-only in-memory vault stored in the background service worker.
 
 ## Features (MVP Scope)
 
@@ -100,7 +100,7 @@ npm run demo -- --strict
 1. Open one of:
    - `https://chatgpt.com`
    - `https://chat.mistral.ai/chat`
-2. Enable AETHER SHROUD in the popup.
+2. Enable MIRAGE SHROUD in the popup.
 3. Open DevTools (`F12`) and go to **Network**.
 4. Send a prompt containing sensitive values, for example:
    - `Email Jane Doe at jane.doe@example.com and call +1 (415) 555-1212 about $2,450 for OpenAI.`
@@ -115,23 +115,23 @@ npm run demo -- --strict
 
 The extension now emits prefixed logs to help diagnose masking flow:
 
-- Content script logs: `[AETHER][content] ...`
-- Mistral page-bridge logs: `[AETHER][mistralBridge] ...`
-- Background service worker logs: `[AETHER][background] ...`
+- Content script logs: `[MIRAGE][content] ...`
+- Mistral page-bridge logs: `[MIRAGE][mistralBridge] ...`
+- Background service worker logs: `[MIRAGE][background] ...`
 
 Where to inspect:
 
 1. **Page DevTools Console** on `https://chat.mistral.ai/chat`
    - Includes content + mistralBridge logs
 2. **Extension service worker console**
-   - Open `chrome://extensions` -> AETHER SHROUD -> **Service Worker** -> **Inspect**
+   - Open `chrome://extensions` -> MIRAGE SHROUD -> **Service Worker** -> **Inspect**
    - Includes background logs
 
 Quick checks for `chat.mistral.ai`:
 
-- You should see `[AETHER][mistralBridge] installed` after page load.
-- On send, you should see `[AETHER][mistralBridge] intercepted target fetch`.
-- Then `[AETHER][content] mistral bridge request received` and `[AETHER][background] request received maskText`.
+- You should see `[MIRAGE][mistralBridge] installed` after page load.
+- On send, you should see `[MIRAGE][mistralBridge] intercepted target fetch`.
+- Then `[MIRAGE][content] mistral bridge request received` and `[MIRAGE][background] request received maskText`.
 - If you see `request JSON shape unexpected; content array missing`, Mistral changed request structure and bridge matching needs an update.
 
 ## ORG Dictionary (User-editable Constant)

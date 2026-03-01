@@ -1,21 +1,21 @@
 # CLAUDE.md
 
-Project-level context for AI coding agents working on the Aether Shroud monorepo.
+Project-level context for AI coding agents working on the Mirage Shroud monorepo.
 
 ## What this project is
 
-Aether Shroud is a privacy layer for LLM interactions. It performs reversible redaction of sensitive data (PII, secrets, financial data) before it reaches cloud LLM providers, and rehydrates tokens in the response so the user sees original values.
+Mirage Shroud is a privacy layer for LLM interactions. It performs reversible redaction of sensitive data (PII, secrets, financial data) before it reaches cloud LLM providers, and rehydrates tokens in the response so the user sees original values.
 
 Two products share a common core:
 - **extension/** - Chrome Extension (MV3) that intercepts chat UIs (ChatGPT, Mistral)
-- **aether-vault/** - Tauri desktop app (Svelte 5 + Rust) for file-level redaction, persistent vault, and local LLM-assisted detection
+- **mirage-vault/** - Tauri desktop app (Svelte 5 + Rust) for file-level redaction, persistent vault, and local LLM-assisted detection
 
 ## Repo structure
 
 ```
-aether-shroud-mvp/
+mirage-shroud-mvp/
 ├── extension/          Chrome extension (TypeScript, esbuild, compromise.js)
-├── aether-vault/       Tauri desktop app (SvelteKit, Rust backend)
+├── mirage-vault/       Tauri desktop app (SvelteKit, Rust backend)
 ├── design/             Design files (.pen) and inspiration screenshots
 ├── ROADMAP.md          Product plan (phases 1-3)
 ├── RESEARCH.md         Technical research on redaction techniques
@@ -23,7 +23,7 @@ aether-shroud-mvp/
 └── justfile            Task runner (empty, being set up)
 ```
 
-No formal monorepo tooling yet (no pnpm workspaces, no turborepo). Each package has its own `package.json` and is built independently. A shared `@aether-shroud/core` package is planned but not yet extracted.
+No formal monorepo tooling yet (no pnpm workspaces, no turborepo). Each package has its own `package.json` and is built independently. A shared `@mirage-shroud/core` package is planned but not yet extracted.
 
 ## Key concepts
 
@@ -37,7 +37,7 @@ No formal monorepo tooling yet (no pnpm workspaces, no turborepo). Each package 
 
 - **Extension commands** run from `extension/`:
   - `pnpm install` / `pnpm build` / `pnpm dev` / `pnpm test`
-- **Vault app commands** run from `aether-vault/`:
+- **Vault app commands** run from `mirage-vault/`:
   - `pnpm install` / `pnpm tauri dev` / `pnpm check`
 - There is no root package.json. Run commands inside the respective package directory.
 
