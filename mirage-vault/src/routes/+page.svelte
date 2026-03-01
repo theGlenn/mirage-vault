@@ -14,6 +14,8 @@
   import EntityPanel from '$lib/components/EntityPanel.svelte';
   import SettingsScreen from '$lib/components/SettingsScreen.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+  import SessionList from '$lib/components/SessionList.svelte';
+  import SessionDetail from '$lib/components/SessionDetail.svelte';
   import { maskWithStrategy } from '$lib/masking';
   import { BASE_ENTITY_TYPE_ORDER } from '$lib/entityColors';
   import type { UploadProgress } from '$lib/types/upload';
@@ -34,6 +36,8 @@
   let pasteText = $state('');
   let pasteProcessing = $state(false);
   let searchQuery = $state('');
+  let selectedSessionId: number | null = $state(null);
+  let sessionDetailRef: SessionDetail | undefined = $state(undefined);
   let toastMessage = $state('');
   let toastTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -736,6 +740,84 @@
     }
   }
 
+  // --- Session file drop: ingest files then link to session ---
+
+  async function linkItemToSession(sessionId: number, itemId: number) {
+    await invoke('add_item_to_session', { sessionId, itemId });
+    await invoke('reconcile_item_tokens', { sessionId, itemId });
+    const item = await invoke<ItemDetail>('get_item', { itemId });
+    await invoke('add_session_entry', {
+      sessionId,
+      entryType: 'input',
+      rawContent: item.masked_content,
+      sourceItemId: itemId
+    });
+  }
+
+  async function handleSessionFileDrop(paths: string[], sessionId: number) {
+    errorMessage = '';
+
+    const invalidFiles: string[] = [];
+    const validPaths: { path: string; name: string }[] = [];
+
+    for (const path of paths) {
+      const name = path.replace(/\\/g, '/').split('/').pop() || path;
+      const ext = getExtension(name);
+      if (!ACCEPTED_EXTENSIONS.includes(ext)) {
+        invalidFiles.push(name);
+      } else {
+        validPaths.push({ path, name });
+      }
+    }
+
+    if (invalidFiles.length > 0) {
+      errorMessage = `Unsupported file type(s): ${invalidFiles.join(', ')}. Only .txt, .md, .csv, .json, and .pdf files are accepted.`;
+      return;
+    }
+
+    // Create tracking entries for all files
+    const trackingEntries: { path: string; name: string; trackingId: string }[] = [];
+    for (const { path, name } of validPaths) {
+      const ext = getExtension(name).replace('.', '');
+      const trackingId = createUploadEntry({ filePath: path, fileName: name, fileType: ext });
+      trackingEntries.push({ path, name, trackingId });
+    }
+
+    logger.info(`Processing ${trackingEntries.length} file(s) for session ${sessionId}`, {
+      file: trackingEntries.map(e => e.name).join(', ')
+    });
+
+    // Process sequentially: ingest each file, then link to session
+    for (const { path, name, trackingId } of trackingEntries) {
+      try {
+        const ext = getExtension(name);
+        if (ext === '.pdf') {
+          await ingestPdfFilePath(path, name, trackingId);
+        } else {
+          await ingestFilePath(path, name, trackingId);
+        }
+
+        // After successful ingestion, link to session
+        const upload = uploadStates.get(trackingId);
+        if (upload?.itemId != null) {
+          await linkItemToSession(sessionId, upload.itemId);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error('Session file processing failed', { trackingId, file: name, stage: 'error' });
+        const current = uploadStates.get(trackingId);
+        updateUploadState(trackingId, {
+          stage: 'error',
+          error: msg,
+          errorStage: current?.stage ?? 'reading',
+        });
+      }
+    }
+
+    // Refresh session detail after all files are linked
+    sessionDetailRef?.loadSession();
+  }
+
   // Load items on mount and set up Tauri drag-drop events
   onMount(() => {
     refreshItems().catch(err => {
@@ -758,7 +840,11 @@
         dragOver = false;
         logger.info('Files dropped', { file: event.payload.paths.join(', ') });
         try {
-          await handleFileDrop(event.payload.paths);
+          if (activeView === 'sessions' && selectedSessionId != null) {
+            await handleSessionFileDrop(event.payload.paths, selectedSessionId);
+          } else {
+            await handleFileDrop(event.payload.paths);
+          }
         } catch (err) {
           logger.error('Failed to handle file drop', { file: String(err) });
           errorMessage = 'Failed to process files: ' + (err instanceof Error ? err.message : String(err));
@@ -780,7 +866,7 @@
 
 <div class="app-layout">
   <!-- Left Sidebar: Navigation -->
-  <Sidebar {activeView} onnavigate={(view) => { activeView = view; if (view === 'settings') { selectedItemId = null; selectedItem = null; } }} />
+  <Sidebar {activeView} onnavigate={(view) => { activeView = view; if (view !== 'browse') { selectedItemId = null; selectedItem = null; } if (view !== 'sessions') { selectedSessionId = null; } }} />
 
   <!-- Center: Content Area -->
   <main
@@ -790,6 +876,12 @@
   >
     {#if activeView === 'settings'}
       <SettingsScreen />
+    {:else if activeView === 'sessions'}
+      {#if selectedSessionId != null}
+        <SessionDetail bind:this={sessionDetailRef} sessionId={selectedSessionId} {dragOver} onback={() => { selectedSessionId = null; }} />
+      {:else}
+        <SessionList onselectsession={(id) => { selectedSessionId = id; }} />
+      {/if}
     {:else}
       {#if selectedItem}
         <FileViewer

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import PixelIcon from './PixelIcon.svelte';
 
-	export type ActiveView = 'browse' | 'settings';
+	export type ActiveView = 'browse' | 'sessions' | 'settings';
 
 	let { activeView = 'browse', onnavigate }: { activeView: ActiveView; onnavigate: (view: ActiveView) => void } = $props();
 </script>
@@ -20,6 +20,15 @@
 		>
 			<PixelIcon name="folder" size={20} />
 			<span class="nav-label">BROWSE</span>
+		</button>
+		<button
+			class="nav-item"
+			class:nav-item-active={activeView === 'sessions'}
+			onclick={() => onnavigate('sessions')}
+			aria-current={activeView === 'sessions' ? 'page' : undefined}
+		>
+			<PixelIcon name="sessions" size={20} />
+			<span class="nav-label">SESSIONS</span>
 		</button>
 		<button
 			class="nav-item"

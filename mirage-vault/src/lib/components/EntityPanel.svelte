@@ -72,7 +72,7 @@
   } from '$lib/entityColors';
 
   let { activeView, selectedItem, items, onrequestdeletecustomtype }: {
-    activeView: 'browse' | 'settings';
+    activeView: 'browse' | 'sessions' | 'settings';
     selectedItem: ItemDetail | null;
     items: VaultItem[];
     onrequestdeletecustomtype: (entityType: string) => void;

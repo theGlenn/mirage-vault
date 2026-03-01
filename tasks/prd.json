@@ -19,7 +19,7 @@
         "cargo check passes from src-tauri/"
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Follow the existing idempotent migration pattern in db.rs — ALTER TABLE ADD COLUMN wrapped in match with 'duplicate column name' error catch. New tables go in the execute_batch block. PRAGMA foreign_keys = ON is already set."
     },
     {
@@ -36,7 +36,7 @@
         "cargo check passes from src-tauri/"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Use State<'_, DbState> for DB access. Lock mutex with db.0.lock(). Return Result<T, String> and map errors with .map_err(|e| e.to_string()). The list_sessions query should use LEFT JOIN + GROUP BY to get counts. Look at list_items and get_item in commands.rs for the existing pattern."
     },
     {
@@ -52,7 +52,7 @@
         "cargo check passes from src-tauri/"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "Simple UPDATE/DELETE statements. The cascade delete is handled by the ON DELETE CASCADE foreign key constraints from US-001. Still good to verify items are NOT deleted when a session is removed."
     },
     {
@@ -68,7 +68,7 @@
         "cargo check passes from src-tauri/"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "For get_session_entities, join session_items → entities, decrypt original_value for each row, then deduplicate in Rust using a HashMap<(entity_type, decrypted_original_value), token>. The UNIQUE constraint on session_items(session_id, item_id) prevents duplicate links."
     },
     {
@@ -84,7 +84,7 @@
         "cargo check passes from src-tauri/"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "For the decode regex, use something like r'\\[\\[(\\w+)[_:](\\w+)\\]\\]' to match both formats. Build the token map from entities table (token column) to original_value (decrypted). Use regex replace_all with a closure that looks up each match in the map."
     },
     {
@@ -101,7 +101,7 @@
         "cargo check passes from src-tauri/"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "This is the most complex backend command. The token rewriting in masked_content is a string find-and-replace of old_token → new_token. Be careful about replacement order — replace longer tokens first to avoid partial matches. Use a transaction so the entities and masked_content update atomically."
     },
     {
@@ -120,7 +120,7 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "Update the ActiveView type export in Sidebar.svelte. If 'chat' icon doesn't exist in PixelIcon.svelte, add a new pixel art icon (24x24 SVG, fill=currentColor, shape-rendering=crispEdges). Look at the existing Sidebar.svelte pattern for nav items."
     },
     {
@@ -142,7 +142,7 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 8,
-      "passes": false,
+      "passes": true,
       "notes": "Follow the FileCard.svelte / FileBrowser.svelte patterns for card styling — dark background, border, rounded corners (0px for pixel art), status badge. Use the Svelte 5 callback props pattern (onselectsession, not createEventDispatcher). Import ConfirmDialog from $lib/components/ConfirmDialog.svelte."
     },
     {
@@ -161,7 +161,7 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 9,
-      "passes": false,
+      "passes": true,
       "notes": "This sets up the session detail shell. The feed entries, paste input, and drop zone are added in subsequent stories. Keep the component focused on the layout structure: header with back/name/status, scrollable feed body, and a bottom area (placeholder for the paste input). Load session data with invoke('get_session') which returns SessionDetail from US-002."
     },
     {
@@ -179,7 +179,7 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 10,
-      "passes": false,
+      "passes": true,
       "notes": "The session data from get_session already includes entries with decrypted content. Just render them as cards in the feed. Input entries use existing accent orange, output entries use a different color for contrast. Keep the card compact — this is a feed, not a file viewer."
     },
     {
@@ -199,7 +199,7 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 11,
-      "passes": false,
+      "passes": true,
       "notes": "Follow the SearchBar pattern for the fixed-to-bottom positioning (position: absolute, bottom: 0, parent has position: relative). The submit flow is: add entry → decode entry → refresh session. Use async/await for the sequential invoke calls."
     },
     {
@@ -217,7 +217,7 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 12,
-      "passes": false,
+      "passes": true,
       "notes": "For the vault picker, call invoke('list_items') to get all items, then filter out IDs already in the session. The drop zone overlay pattern is the same as FileBrowser's dragOver state. The upload pipeline is in +page.svelte — either extract the file ingestion functions to a shared module or call them from the parent and pass the resulting item ID down."
     },
     {
@@ -238,7 +238,7 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 13,
-      "passes": false,
+      "passes": true,
       "notes": "Reuse the overlay pattern from FileViewer.svelte (position: absolute, inset: 0, semi-transparent backdrop). For input entries, load the full item detail via invoke('get_item') using source_item_id. For output entries, the raw_content and decoded_content are already in the session data."
     }
   ]

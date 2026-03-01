@@ -37,4 +37,232 @@
 - `color-mix(in srgb, var(--bg-surface) 80%, transparent)` for semi-transparent backgrounds
 - Crypto: `crypto::encrypt(key, plaintext)` and `crypto::decrypt(key, ciphertext)` — key from `CryptoState` managed state
 - Encryption fallback: if decryption fails, return raw string (handles pre-encryption data)
+- SessionList component: exports `SessionSummary` interface, uses `onselectsession` callback prop
+- ConfirmDialog can be rendered inside child components (not just +page.svelte) since overlay uses `position: absolute; inset: 0`
+- SessionDetail component: `<SessionDetail sessionId={id} onback={() => ...} />` — loads session data on mount via `invoke('get_session')`
+- SessionEntryCard component: `<SessionEntryCard entry={e} itemName={name} onselect={(id) => ...} />` — exports `SessionEntry` interface
+- Output entries use `--color-grim-blue` accent, input entries use `--accent-orange` — consistent complementary color scheme
+- Inline editing pattern: click text → show input, blur/enter saves, escape cancels — reuse for editable labels
+- Frosted glass fixed-bottom: `position: absolute; bottom: 0; background: color-mix(in srgb, var(--bg-surface) 80%, transparent); backdrop-filter: blur(8px);` — parent needs `position: relative`, sibling scroll area needs bottom padding
+- VaultPicker component: `<VaultPicker sessionItemIds={set} onselect={(id) => ...} onclose={() => ...} />` — self-contained, calls `invoke('list_items')` internally
+- Session item linking flow: `add_item_to_session` → `reconcile_item_tokens` → `get_item` → `add_session_entry` (input type)
+- Tauri drag-drop context routing: check `activeView` and `selectedSessionId` in the global drop handler to route to session-aware or browse-aware ingestion
+- `export function` in Svelte 5 instance script exposes methods on component instance via `bind:this`
+- SessionEntryPopup component: `<SessionEntryPopup entry={e} sessionId={id} sessionEntities={entities} onclose={() => ...} onrefresh={() => ...} />` — overlay with masked/decoded toggle and token highlighting
+- Session entities for token mapping: `invoke('get_session_entities', { sessionId })` returns `SessionEntityOutput[]` with `entity_type`, `original_value`, `token`
+---
+
+## 2026-03-01 - US-001
+- Implemented sessions database schema: `sessions`, `session_items`, `session_entries` tables with IF NOT EXISTS
+- Added indexes on session_items(session_id), session_items(item_id), session_entries(session_id)
+- Added idempotent `ALTER TABLE items ADD COLUMN session_id INTEGER` migration
+- Foreign keys cascade on delete for sessions → session_items and sessions → session_entries; source_item_id uses ON DELETE SET NULL
+- Files changed: `mirage-vault/src-tauri/src/db.rs`
+- **Learnings for future iterations:**
+  - New tables go in the `execute_batch` block alongside existing tables — just extend the SQL string
+  - New column migrations go in the `migrations` array with the existing ALTER TABLE pattern
+  - `cargo check` from `mirage-vault/src-tauri/` is the validation command
+---
+
+## 2026-03-01 - US-002
+- Implemented Tauri commands for session CRUD: `create_session`, `list_sessions`, `get_session`
+- Added Serialize structs: `SessionSummary`, `SessionDetail`, `SessionEntryOutput`, `SessionItemOutput`
+- `list_sessions` uses correlated subqueries for item_count and entry_count, ordered by updated_at DESC
+- `get_session` loads session row, then entries (with decrypt fallback) and items (with entity count via LEFT JOIN)
+- Registered all three commands in lib.rs generate_handler![]
+- Removed duplicate `commands::update_item_masking` registration from lib.rs
+- Files changed: `mirage-vault/src-tauri/src/commands.rs`, `mirage-vault/src-tauri/src/lib.rs`
+- **Learnings for future iterations:**
+  - Correlated subqueries in list queries are simpler when counting from multiple join tables
+  - `get_session` loads entries and items separately then merges via `..session` struct update
+  - Encrypted fields in session_entries use same decrypt-with-fallback pattern as get_item
+  - lib.rs had a duplicate `update_item_masking` registration — watch for duplicates when adding new commands
+---
+
+## 2026-03-01 - US-003
+- Implemented four Tauri commands: `update_session`, `archive_session`, `unarchive_session`, `delete_session`
+- `update_session` updates name and updated_at timestamp
+- `archive_session` / `unarchive_session` toggle status between 'archived' and 'active', updating updated_at
+- `delete_session` deletes the session row; ON DELETE CASCADE handles session_items and session_entries cleanup
+- All commands return error if session not found (updated/deleted == 0 check)
+- Registered all four commands in lib.rs generate_handler![]
+- Files changed: `mirage-vault/src-tauri/src/commands.rs`, `mirage-vault/src-tauri/src/lib.rs`
+- **Learnings for future iterations:**
+  - Simple UPDATE/DELETE commands follow the same pattern: lock mutex, execute, check affected rows, return Ok/Err
+  - No need for explicit transaction on single DELETE — the ON DELETE CASCADE foreign keys handle related row cleanup
+  - The `updated == 0` / `deleted == 0` pattern provides clean "not found" error handling
+---
+
+## 2026-03-01 - US-004
+- Implemented three Tauri commands: `add_item_to_session`, `remove_item_from_session`, `get_session_entities`
+- Added `SessionEntityOutput` Serialize struct with entity_type, original_value, token
+- `add_item_to_session` inserts into session_items and updates sessions.updated_at
+- `remove_item_from_session` deletes from session_items with `deleted == 0` check, updates sessions.updated_at
+- `get_session_entities` joins session_items → entities, decrypts original_value, deduplicates by (entity_type, original_value) keeping the first token encountered, preserving insertion order
+- Added `std::collections::HashMap` import for deduplication logic
+- Registered all three commands in lib.rs generate_handler![]
+- Files changed: `mirage-vault/src-tauri/src/commands.rs`, `mirage-vault/src-tauri/src/lib.rs`
+- **Learnings for future iterations:**
+  - For deduplication with order preservation, use a HashMap for seen keys + a Vec for insertion order
+  - The UNIQUE constraint on session_items(session_id, item_id) handles duplicate link prevention at the DB level — the INSERT will error naturally
+  - Entity queries across a session require joining through session_items to get entities from all linked items
+---
+
+## 2026-03-01 - US-005
+- Implemented two Tauri commands: `add_session_entry`, `decode_session_entry`
+- `add_session_entry` encrypts raw_content, inserts into session_entries, updates sessions.updated_at, returns new entry id
+- `decode_session_entry` loads all entities across session items via session_items join, builds token→original_value map, decrypts entry's raw_content, uses regex `\[\[(\w+)[_:](\w+)\]\]` to match both `[[TYPE:HASH]]` and `[[TYPE_N]]` formats, replaces tokens via `replace_all` with closure lookup, encrypts decoded result, stores in decoded_content column, returns decoded text
+- Tokens with no match in the session vault are left as-is (partial decode is valid)
+- Added `use regex::Regex` import (regex crate was already in Cargo.toml)
+- Registered both commands in lib.rs generate_handler![]
+- Files changed: `mirage-vault/src-tauri/src/commands.rs`, `mirage-vault/src-tauri/src/lib.rs`
+- **Learnings for future iterations:**
+  - `regex::Regex::new()` returns a Result — map_err for consistent error handling
+  - `replace_all` with a closure is the idiomatic way to do conditional replacements — the closure receives `Captures` and returns the replacement string
+  - Token map key should be the full token string (e.g., `[[EMAIL:a3f2c1b9]]`) since that's what appears in the text
+  - Use `HashMap::entry().or_insert()` to keep the first token mapping when duplicates exist
+---
+
+## 2026-03-01 - US-006
+- Implemented `reconcile_item_tokens(session_id, item_id)` Tauri command for cross-file token namespace reconciliation
+- Algorithm: loads other session items' entities → builds (type, value) → token map → loads new item's entities → reuses existing tokens for matching (type, value) pairs → generates new non-conflicting [[TYPE:HASH]] tokens for unique entities → rewrites masked_content with token replacements → updates entities and hash_mappings atomically in a transaction
+- Token replacement sorts by old_token length descending to prevent partial match issues
+- New tokens use `rand::thread_rng()` to generate 8-char hex hashes in [[TYPE:HASH]] format
+- Idempotent: running twice produces same result since tokens already match on second pass
+- Added `use rand::Rng` and changed `HashMap` import to `std::collections::{HashMap, HashSet}`
+- Registered command in lib.rs generate_handler![]
+- Files changed: `mirage-vault/src-tauri/src/commands.rs`, `mirage-vault/src-tauri/src/lib.rs`
+- **Learnings for future iterations:**
+  - For token reconciliation, exclude the current item from the session entity query (`si.item_id != ?2`) since the item is already linked via `add_item_to_session`
+  - Register new tokens in `session_map` during iteration so duplicate (type, value) entities within the same item get the same token
+  - Sort token replacements by length descending before string replacement to prevent partial matches (e.g., `[[EMAIL_11]]` before `[[EMAIL_1]]`)
+  - `rand::thread_rng().gen::<[u8; 4]>()` + manual hex formatting avoids needing the `hex` crate
+  - The `extract_hash_from_token` helper already exists in commands.rs for parsing [[TYPE:HASH]] tokens
+---
+
+## 2026-03-01 - US-007
+- Added SESSIONS tab to sidebar navigation between BROWSE and SETTINGS
+- Updated `ActiveView` type to `'browse' | 'sessions' | 'settings'` in Sidebar.svelte
+- Added 'sessions' pixel art icon (chat bubble) to PixelIcon.svelte
+- Updated EntityPanel.svelte `activeView` prop type to accept 'sessions'
+- +page.svelte: sessions view shows a centered placeholder with "Sessions" text
+- Existing BROWSE and SETTINGS views unchanged; navigation clears file selection for non-browse views
+- Files changed: `Sidebar.svelte`, `PixelIcon.svelte`, `EntityPanel.svelte`, `+page.svelte`
+- **Learnings for future iterations:**
+  - EntityPanel has its own inline `activeView` type — must update it when adding new views
+  - When navigating away from browse, clear selectedItemId/selectedItem to avoid stale state
+  - New PixelIcon names must be added to the `IconName` union type and a new `{:else if}` SVG block
+- SessionList component: exports `SessionSummary` interface, uses `onselectsession` callback prop
+- ConfirmDialog is rendered inside SessionList (not in +page.svelte) since it's session-scoped
+---
+
+## 2026-03-01 - US-008
+- Created `SessionList.svelte` component that calls `invoke('list_sessions')` on mount and displays session cards
+- Each card shows name, status badge (active/archived), item count, entry count, and formatted last updated time
+- "New Session" button creates sessions with default name `Session — YYYY-MM-DD HH:MM`
+- Sessions sorted: active first, archived second (both groups by updated_at DESC from backend)
+- Archive/unarchive toggle button per session using lock/unlock icons
+- Delete button with ConfirmDialog confirmation (reused existing component)
+- Archived sessions appear dimmed (opacity: 0.55)
+- Empty state with icon, text, hint, and "New Session" button shown when no sessions exist
+- Clicking a session card calls `onselectsession` callback with session id
+- Integrated into +page.svelte: replaces sessions placeholder, rendered when `activeView === 'sessions'`
+- Removed unused `.sessions-placeholder` CSS from +page.svelte
+- Files changed: `mirage-vault/src/lib/components/SessionList.svelte` (new), `mirage-vault/src/routes/+page.svelte`
+- **Learnings for future iterations:**
+  - SessionList owns its own ConfirmDialog for delete — keeps +page.svelte clean
+  - `$derived.by()` is needed for sorting/filtering logic that produces a new array
+  - Card action buttons use `e.stopPropagation()` to prevent card click when clicking archive/delete
+  - The grid uses `minmax(280px, 1fr)` (wider than FileCard's 220px) since session cards have more text content
+---
+
+## 2026-03-01 - US-009
+- Created `SessionDetail.svelte` with header (back button, inline-editable name, status badge) and scrollable feed area
+- Header uses `chevron-left` PixelIcon for back navigation, inline text input for renaming (blur/enter saves, escape cancels)
+- Feed area shows empty state placeholder: "No entries yet. Add files or paste LLM output to get started."
+- Added `chevron-left` icon to PixelIcon.svelte (mirrored `chevron-right` path)
+- Integrated into `+page.svelte`: `selectedSessionId` state (number | null), set by SessionList's `onselectsession`, cleared by SessionDetail's `onback`
+- Navigating away from sessions clears `selectedSessionId`
+- Files changed: `mirage-vault/src/lib/components/SessionDetail.svelte` (new), `mirage-vault/src/lib/components/PixelIcon.svelte`, `mirage-vault/src/routes/+page.svelte`
+- **Learnings for future iterations:**
+  - `chevron-left` icon was missing — added by mirroring `chevron-right` path coordinates (swap x-offsets around center)
+  - SessionDetail loads data via `invoke('get_session', { sessionId })` returning `SessionDetailData` with entries and items arrays
+  - Inline name editing pattern: click span → show input, blur/enter → save via `invoke('update_session')`, escape → cancel
+  - Clear `selectedSessionId` on sidebar navigation away from sessions to avoid stale state
+---
+
+## 2026-03-01 - US-010
+- Created `SessionEntryCard.svelte` component with visual distinction between input and output entries
+- Input entries: file PixelIcon, file name (from item) or 'Pasted text', left accent border in `--accent-orange`
+- Output entries: sessions PixelIcon, 'LLM Response' label, left accent border in `--color-grim-blue`
+- Cards show timestamp, truncated preview (~150 chars), and 'Not decoded' badge for output entries without decoded_content
+- Cards are clickable — emit `onselect` callback with entry id (handler is placeholder for US-013)
+- Updated `SessionDetail.svelte` to render `SessionEntryCard` for each entry, sorted by `created_at` ascending
+- Added `itemNameMap` derived value mapping `source_item_id` → item name for entry card labels
+- Empty state preserved when no entries exist
+- Files changed: `mirage-vault/src/lib/components/SessionEntryCard.svelte` (new), `mirage-vault/src/lib/components/SessionDetail.svelte`
+- **Learnings for future iterations:**
+  - `--color-grim-blue` from tokens.css is a good muted blue for secondary accent (output entries) to contrast with `--accent-orange` (input entries)
+  - `SessionEntry` interface exported from `SessionEntryCard.svelte` can be imported by other components that work with entries
+  - Use `$derived.by()` for item name map construction from session.items array
+  - Sort entries by `created_at` string comparison works since dates are ISO-formatted from the backend
+---
+
+## 2026-03-01 - US-011
+- Added fixed-to-bottom paste input area to `SessionDetail.svelte` with multi-line textarea and submit button
+- Textarea placeholder: "Paste LLM response here to decode..."
+- Submit flow: `add_session_entry` (type 'output') → `decode_session_entry` → `loadSession()` refresh → scroll to bottom
+- Textarea cleared after successful submission; submit button disabled when textarea is empty or submitting
+- Ctrl/Cmd + Enter keyboard shortcut for quick submit
+- Frosted glass background (same `color-mix` + `backdrop-filter: blur` pattern as SearchBar)
+- Feed area has `padding-bottom: 100px` to prevent entries from being hidden behind the input area
+- `.session-detail` gains `position: relative` for the absolute-positioned input area
+- Submit button shows a spinner during processing; uses `chevron-right` PixelIcon when idle
+- Files changed: `mirage-vault/src/lib/components/SessionDetail.svelte`
+- **Learnings for future iterations:**
+  - The frosted glass pattern is: `background: color-mix(in srgb, var(--bg-surface) 80%, transparent); backdrop-filter: blur(8px);` — reuse this for any fixed-bottom overlay
+  - For sequential async invoke calls (add → decode → refresh), use plain `await` chaining — no need for Promise.all since they depend on each other
+  - `tick()` before `scrollTop = scrollHeight` ensures the DOM has updated with new entries before scrolling
+  - `border-radius: 0px` for pixel art consistency — applies to textarea, buttons, and all input elements
+---
+
+## 2026-03-01 - US-012
+- Created `VaultPicker.svelte` overlay component: lists vault items not yet in session, click to add
+- Added 'Add Files' button to `SessionDetail.svelte` header that opens vault picker overlay
+- Vault picker filters items by `sessionItemIds` Set derived from session data, shows only `status === 'done'` items
+- Vault item selection flow: `add_item_to_session` → `reconcile_item_tokens` → `get_item` (for masked content) → `add_session_entry` (input type) → refresh session
+- Added drop zone overlay to `SessionDetail.svelte`: translucent overlay with "Drop files to add to session" text, animated pulsing border
+- `dragOver` state passed from `+page.svelte` to `SessionDetail` for native Tauri drag-drop visual feedback
+- Modified `+page.svelte` Tauri drag-drop handler: when in session view (`activeView === 'sessions'` and `selectedSessionId != null`), routes drops through `handleSessionFileDrop` which ingests files via existing pipeline then links each to the session
+- `linkItemToSession` helper: `add_item_to_session` → `reconcile_item_tokens` → `get_item` → `add_session_entry`
+- `SessionDetail.loadSession()` exported for parent to trigger refresh after session file drops
+- `sessionDetailRef` bound via `bind:this` in `+page.svelte` to call `loadSession()` after drop completes
+- Supported file types: .txt, .md, .csv, .json, .pdf (same `ACCEPTED_EXTENSIONS` validation)
+- Files changed: `mirage-vault/src/lib/components/VaultPicker.svelte` (new), `mirage-vault/src/lib/components/SessionDetail.svelte`, `mirage-vault/src/routes/+page.svelte`, `tasks/prd.json`
+- **Learnings for future iterations:**
+  - VaultPicker is self-contained — calls `invoke('list_items')` directly and filters by `sessionItemIds` Set
+  - Session linking after file ingestion: use `uploadStates.get(trackingId)?.itemId` to get the created item ID after ingestion completes
+  - `export function` in Svelte 5 instance `<script>` exposes the function on the component instance via `bind:this`
+  - Tauri native drag-drop events are global (webview-level) — route them in `+page.svelte` based on `activeView` context
+  - Drop overlay uses `pointer-events: none` so it doesn't interfere with the underlying drag event handling
+  - The vault picker overlay reuses the center-area overlay pattern: `position: absolute; inset: 0; z-index: 50`
+---
+
+## 2026-03-01 - US-013
+- Created `SessionEntryPopup.svelte` overlay component for viewing full entry content
+- Input entries: loads full item detail via `invoke('get_item')` using `source_item_id`, toggles between Masked and Original views
+- Output entries: toggles between Raw (with token highlighting) and Decoded views
+- Token highlighting uses regex `\[\[(\w+)[_:](\w+)\]\]` to find tokens in content, with hover tooltips showing original values from session entities
+- Undecoded output entries show a "Decode" button that calls `invoke('decode_session_entry')` and refreshes
+- Copy button copies current display content to clipboard with "Copied!" feedback
+- Dismissible via backdrop click, Escape key, or close button (same pattern as FileViewer)
+- Session entities loaded via `invoke('get_session_entities')` when entry is selected, used for token → original_value mapping
+- Integrated into `SessionDetail.svelte`: clicking a `SessionEntryCard` opens the popup, `selectedEntryId` state tracks which entry is open
+- Files changed: `mirage-vault/src/lib/components/SessionEntryPopup.svelte` (new), `mirage-vault/src/lib/components/SessionDetail.svelte`, `tasks/prd.json`
+- **Learnings for future iterations:**
+  - `SessionEntryPopup` follows same overlay pattern as FileViewer and VaultPicker: `position: absolute; inset: 0; z-index: 50`
+  - For input entries, use `invoke('get_item')` to get full `ItemDetail` with `masked_content` and `raw_content` for the toggle
+  - Session entities from `get_session_entities` provide the token→original_value map needed for token highlighting in the popup
+  - Token highlighting uses `ContentSegment` type with `isToken` flag and regex-based parsing — simpler than FileViewer's entity-based approach since we only need token→value mapping
+  - The `onrefresh` callback pattern allows the popup to trigger a session data reload after decode, keeping parent state in sync
 ---

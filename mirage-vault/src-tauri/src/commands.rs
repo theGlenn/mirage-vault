@@ -1,7 +1,10 @@
 use crate::crypto;
 use crate::db::DbState;
 use pdfium_render::prelude::*;
+use rand::Rng;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Write};
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
@@ -619,6 +622,480 @@ pub async fn export_zip(
     Ok(())
 }
 
+// --- Session CRUD commands ---
+
+#[derive(Serialize)]
+pub struct SessionSummary {
+    pub id: i64,
+    pub name: String,
+    pub status: String,
+    pub item_count: i64,
+    pub entry_count: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Serialize)]
+pub struct SessionEntryOutput {
+    pub id: i64,
+    pub entry_type: String,
+    pub source_item_id: Option<i64>,
+    pub raw_content: String,
+    pub decoded_content: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Serialize)]
+pub struct SessionItemOutput {
+    pub id: i64,
+    pub name: String,
+    pub file_type: String,
+    pub entity_count: i64,
+    pub added_at: String,
+}
+
+#[derive(Serialize)]
+pub struct SessionDetail {
+    pub id: i64,
+    pub name: String,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub entries: Vec<SessionEntryOutput>,
+    pub items: Vec<SessionItemOutput>,
+}
+
+#[tauri::command]
+pub fn create_session(db: State<'_, DbState>, name: String) -> Result<i64, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO sessions (name) VALUES (?1)",
+        rusqlite::params![name],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(conn.last_insert_rowid())
+}
+
+#[tauri::command]
+pub fn list_sessions(db: State<'_, DbState>) -> Result<Vec<SessionSummary>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT s.id, s.name, s.status,
+                    (SELECT COUNT(*) FROM session_items si WHERE si.session_id = s.id) AS item_count,
+                    (SELECT COUNT(*) FROM session_entries se WHERE se.session_id = s.id) AS entry_count,
+                    s.created_at, s.updated_at
+             FROM sessions s
+             ORDER BY s.updated_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(SessionSummary {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                status: row.get(2)?,
+                item_count: row.get(3)?,
+                entry_count: row.get(4)?,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut sessions = Vec::new();
+    for row in rows {
+        sessions.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(sessions)
+}
+
+#[tauri::command]
+pub fn get_session(db: State<'_, DbState>, session_id: i64) -> Result<SessionDetail, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+
+    let session = conn
+        .query_row(
+            "SELECT id, name, status, created_at, updated_at FROM sessions WHERE id = ?1",
+            rusqlite::params![session_id],
+            |row| {
+                Ok(SessionDetail {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    status: row.get(2)?,
+                    created_at: row.get(3)?,
+                    updated_at: row.get(4)?,
+                    entries: Vec::new(),
+                    items: Vec::new(),
+                })
+            },
+        )
+        .map_err(|e| e.to_string())?;
+
+    // Load entries
+    let mut entry_stmt = conn
+        .prepare(
+            "SELECT id, entry_type, source_item_id, raw_content, decoded_content, created_at
+             FROM session_entries
+             WHERE session_id = ?1
+             ORDER BY created_at ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let entries = entry_stmt
+        .query_map(rusqlite::params![session_id], |row| {
+            let encrypted_raw: String = row.get(3)?;
+            let encrypted_decoded: Option<String> = row.get(4)?;
+
+            let raw_content = if crypto::is_key_set() {
+                crypto::decrypt(&encrypted_raw).unwrap_or(encrypted_raw)
+            } else {
+                encrypted_raw
+            };
+
+            let decoded_content = encrypted_decoded.map(|enc| {
+                if crypto::is_key_set() {
+                    crypto::decrypt(&enc).unwrap_or(enc)
+                } else {
+                    enc
+                }
+            });
+
+            Ok(SessionEntryOutput {
+                id: row.get(0)?,
+                entry_type: row.get(1)?,
+                source_item_id: row.get(2)?,
+                raw_content,
+                decoded_content,
+                created_at: row.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut entry_list = Vec::new();
+    for entry in entries {
+        entry_list.push(entry.map_err(|e| e.to_string())?);
+    }
+
+    // Load items
+    let mut item_stmt = conn
+        .prepare(
+            "SELECT i.id, i.name, i.file_type, COUNT(e.id) AS entity_count, si.added_at
+             FROM session_items si
+             JOIN items i ON i.id = si.item_id
+             LEFT JOIN entities e ON e.item_id = i.id
+             WHERE si.session_id = ?1
+             GROUP BY i.id
+             ORDER BY si.added_at ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let items = item_stmt
+        .query_map(rusqlite::params![session_id], |row| {
+            Ok(SessionItemOutput {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                file_type: row.get(2)?,
+                entity_count: row.get(3)?,
+                added_at: row.get(4)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut item_list = Vec::new();
+    for item in items {
+        item_list.push(item.map_err(|e| e.to_string())?);
+    }
+
+    Ok(SessionDetail {
+        entries: entry_list,
+        items: item_list,
+        ..session
+    })
+}
+
+// --- Session update/archive/delete commands ---
+
+#[tauri::command]
+pub fn update_session(db: State<'_, DbState>, session_id: i64, name: String) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let updated = conn
+        .execute(
+            "UPDATE sessions SET name = ?1, updated_at = datetime('now') WHERE id = ?2",
+            rusqlite::params![name, session_id],
+        )
+        .map_err(|e| e.to_string())?;
+    if updated == 0 {
+        return Err("Session not found.".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn archive_session(db: State<'_, DbState>, session_id: i64) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let updated = conn
+        .execute(
+            "UPDATE sessions SET status = 'archived', updated_at = datetime('now') WHERE id = ?1",
+            rusqlite::params![session_id],
+        )
+        .map_err(|e| e.to_string())?;
+    if updated == 0 {
+        return Err("Session not found.".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn unarchive_session(db: State<'_, DbState>, session_id: i64) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let updated = conn
+        .execute(
+            "UPDATE sessions SET status = 'active', updated_at = datetime('now') WHERE id = ?1",
+            rusqlite::params![session_id],
+        )
+        .map_err(|e| e.to_string())?;
+    if updated == 0 {
+        return Err("Session not found.".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_session(db: State<'_, DbState>, session_id: i64) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let deleted = conn
+        .execute(
+            "DELETE FROM sessions WHERE id = ?1",
+            rusqlite::params![session_id],
+        )
+        .map_err(|e| e.to_string())?;
+    if deleted == 0 {
+        return Err("Session not found.".to_string());
+    }
+    Ok(())
+}
+
+// --- Session item management commands ---
+
+#[derive(Serialize)]
+pub struct SessionEntityOutput {
+    pub entity_type: String,
+    pub original_value: String,
+    pub token: String,
+}
+
+#[tauri::command]
+pub fn add_item_to_session(db: State<'_, DbState>, session_id: i64, item_id: i64) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO session_items (session_id, item_id) VALUES (?1, ?2)",
+        rusqlite::params![session_id, item_id],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE sessions SET updated_at = datetime('now') WHERE id = ?1",
+        rusqlite::params![session_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn remove_item_from_session(db: State<'_, DbState>, session_id: i64, item_id: i64) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let deleted = conn
+        .execute(
+            "DELETE FROM session_items WHERE session_id = ?1 AND item_id = ?2",
+            rusqlite::params![session_id, item_id],
+        )
+        .map_err(|e| e.to_string())?;
+    if deleted == 0 {
+        return Err("Item not linked to this session.".to_string());
+    }
+    conn.execute(
+        "UPDATE sessions SET updated_at = datetime('now') WHERE id = ?1",
+        rusqlite::params![session_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_session_entities(db: State<'_, DbState>, session_id: i64) -> Result<Vec<SessionEntityOutput>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT e.entity_type, e.original_value, e.token
+             FROM entities e
+             JOIN session_items si ON si.item_id = e.item_id
+             WHERE si.session_id = ?1
+             ORDER BY e.id ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map(rusqlite::params![session_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+
+    // Deduplicate by (entity_type, decrypted_original_value), keeping the first token
+    let mut seen: HashMap<(String, String), String> = HashMap::new();
+    let mut order: Vec<(String, String)> = Vec::new();
+
+    for row in rows {
+        let (entity_type, encrypted_value, token) = row.map_err(|e| e.to_string())?;
+
+        let original_value = if crypto::is_key_set() {
+            crypto::decrypt(&encrypted_value).unwrap_or(encrypted_value)
+        } else {
+            encrypted_value
+        };
+
+        let key = (entity_type.clone(), original_value.clone());
+        if !seen.contains_key(&key) {
+            seen.insert(key.clone(), token);
+            order.push(key);
+        }
+    }
+
+    let result: Vec<SessionEntityOutput> = order
+        .into_iter()
+        .map(|key| {
+            let token = seen.remove(&key).unwrap();
+            SessionEntityOutput {
+                entity_type: key.0,
+                original_value: key.1,
+                token,
+            }
+        })
+        .collect();
+
+    Ok(result)
+}
+
+// --- Session entry commands ---
+
+#[tauri::command]
+pub fn add_session_entry(
+    db: State<'_, DbState>,
+    session_id: i64,
+    entry_type: String,
+    raw_content: String,
+    source_item_id: Option<i64>,
+) -> Result<i64, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+
+    let encrypted_content = if crypto::is_key_set() {
+        crypto::encrypt(&raw_content)?
+    } else {
+        raw_content
+    };
+
+    conn.execute(
+        "INSERT INTO session_entries (session_id, entry_type, source_item_id, raw_content) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![session_id, entry_type, source_item_id, encrypted_content],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let entry_id = conn.last_insert_rowid();
+
+    conn.execute(
+        "UPDATE sessions SET updated_at = datetime('now') WHERE id = ?1",
+        rusqlite::params![session_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(entry_id)
+}
+
+#[tauri::command]
+pub fn decode_session_entry(
+    db: State<'_, DbState>,
+    session_id: i64,
+    entry_id: i64,
+) -> Result<String, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+
+    // 1) Load all entities across all session items
+    let mut stmt = conn
+        .prepare(
+            "SELECT e.token, e.original_value
+             FROM entities e
+             JOIN session_items si ON si.item_id = e.item_id
+             WHERE si.session_id = ?1",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map(rusqlite::params![session_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| e.to_string())?;
+
+    // 2) Build token → decrypted_original_value map
+    let mut token_map: HashMap<String, String> = HashMap::new();
+    for row in rows {
+        let (token, encrypted_value) = row.map_err(|e| e.to_string())?;
+        let original_value = if crypto::is_key_set() {
+            crypto::decrypt(&encrypted_value).unwrap_or(encrypted_value)
+        } else {
+            encrypted_value
+        };
+        // Keep the first mapping if duplicates exist
+        token_map.entry(token).or_insert(original_value);
+    }
+
+    // 3) Read the entry's raw_content and decrypt it
+    let encrypted_raw: String = conn
+        .query_row(
+            "SELECT raw_content FROM session_entries WHERE id = ?1 AND session_id = ?2",
+            rusqlite::params![entry_id, session_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    let raw_content = if crypto::is_key_set() {
+        crypto::decrypt(&encrypted_raw).unwrap_or(encrypted_raw)
+    } else {
+        encrypted_raw
+    };
+
+    // 4) Replace all [[TYPE:HASH]] and [[TYPE_N]] tokens with original values
+    let re = Regex::new(r"\[\[(\w+)[_:](\w+)\]\]").map_err(|e| e.to_string())?;
+    let decoded = re.replace_all(&raw_content, |caps: &regex::Captures| {
+        let full_match = caps.get(0).unwrap().as_str();
+        // Look up the full token in the map; leave as-is if not found
+        token_map.get(full_match).cloned().unwrap_or_else(|| full_match.to_string())
+    });
+
+    let decoded_text = decoded.to_string();
+
+    // 5) Encrypt the decoded result and store in decoded_content column
+    let encrypted_decoded = if crypto::is_key_set() {
+        crypto::encrypt(&decoded_text)?
+    } else {
+        decoded_text.clone()
+    };
+
+    conn.execute(
+        "UPDATE session_entries SET decoded_content = ?1 WHERE id = ?2",
+        rusqlite::params![encrypted_decoded, entry_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // 6) Return the decoded text
+    Ok(decoded_text)
+}
+
 // --- Hash Mapping commands for LLM-based masking ---
 
 #[derive(Deserialize)]
@@ -690,4 +1167,252 @@ pub fn get_hash_mappings(
     }
 
     Ok(result)
+}
+
+// --- Token namespace reconciliation ---
+
+#[tauri::command]
+pub fn reconcile_item_tokens(
+    db: State<'_, DbState>,
+    session_id: i64,
+    item_id: i64,
+) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+
+    conn.execute_batch("BEGIN TRANSACTION;")
+        .map_err(|e| e.to_string())?;
+
+    // 1) Load all entities from OTHER items in the session
+    let mut stmt = conn
+        .prepare(
+            "SELECT e.entity_type, e.original_value, e.token
+             FROM entities e
+             JOIN session_items si ON si.item_id = e.item_id
+             WHERE si.session_id = ?1 AND si.item_id != ?2
+             ORDER BY e.id ASC",
+        )
+        .map_err(|e| {
+            let _ = conn.execute_batch("ROLLBACK;");
+            e.to_string()
+        })?;
+
+    let rows = stmt
+        .query_map(rusqlite::params![session_id, item_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|e| {
+            let _ = conn.execute_batch("ROLLBACK;");
+            e.to_string()
+        })?;
+
+    // Build (entity_type, decrypted_value) → existing_token map
+    // Also collect all existing session tokens into a HashSet
+    let mut session_map: HashMap<(String, String), String> = HashMap::new();
+    let mut existing_tokens: HashSet<String> = HashSet::new();
+
+    for row in rows {
+        let (entity_type, encrypted_value, token) = row.map_err(|e| {
+            let _ = conn.execute_batch("ROLLBACK;");
+            e.to_string()
+        })?;
+
+        let original_value = if crypto::is_key_set() {
+            crypto::decrypt(&encrypted_value).unwrap_or(encrypted_value)
+        } else {
+            encrypted_value
+        };
+
+        existing_tokens.insert(token.clone());
+        let key = (entity_type, original_value);
+        session_map.entry(key).or_insert(token);
+    }
+
+    // 2) Load the new item's entities
+    let mut item_stmt = conn
+        .prepare(
+            "SELECT entity_type, original_value, token, span_start, span_end
+             FROM entities WHERE item_id = ?1 ORDER BY id ASC",
+        )
+        .map_err(|e| {
+            let _ = conn.execute_batch("ROLLBACK;");
+            e.to_string()
+        })?;
+
+    let item_rows = item_stmt
+        .query_map(rusqlite::params![item_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        })
+        .map_err(|e| {
+            let _ = conn.execute_batch("ROLLBACK;");
+            e.to_string()
+        })?;
+
+    struct EntityRow {
+        entity_type: String,
+        decrypted_value: String,
+        old_token: String,
+        span_start: i64,
+        span_end: i64,
+    }
+
+    let mut item_entities: Vec<EntityRow> = Vec::new();
+    for row in item_rows {
+        let (entity_type, encrypted_value, token, span_start, span_end) = row.map_err(|e| {
+            let _ = conn.execute_batch("ROLLBACK;");
+            e.to_string()
+        })?;
+
+        let original_value = if crypto::is_key_set() {
+            crypto::decrypt(&encrypted_value).unwrap_or(encrypted_value)
+        } else {
+            encrypted_value
+        };
+
+        item_entities.push(EntityRow {
+            entity_type,
+            decrypted_value: original_value,
+            old_token: token,
+            span_start,
+            span_end,
+        });
+    }
+
+    // 3) For each entity, determine new token
+    let mut rng = rand::thread_rng();
+    let mut token_replacements: Vec<(String, String)> = Vec::new();
+    let mut new_entities: Vec<(String, String, String, i64, i64)> = Vec::new();
+
+    for entity in &item_entities {
+        let key = (entity.entity_type.clone(), entity.decrypted_value.clone());
+
+        let new_token = if let Some(existing_token) = session_map.get(&key) {
+            existing_token.clone()
+        } else {
+            // Generate a new [[TYPE:HASH]] token that doesn't conflict
+            let new_tok = loop {
+                let random_bytes: [u8; 4] = rng.gen();
+                let hash = format!(
+                    "{:02x}{:02x}{:02x}{:02x}",
+                    random_bytes[0], random_bytes[1], random_bytes[2], random_bytes[3]
+                );
+                let candidate = format!("[[{}:{}]]", entity.entity_type, hash);
+                if !existing_tokens.contains(&candidate) {
+                    existing_tokens.insert(candidate.clone());
+                    break candidate;
+                }
+            };
+            // Register so subsequent entities with same (type, value) get the same token
+            session_map.insert(key, new_tok.clone());
+            new_tok
+        };
+
+        if new_token != entity.old_token {
+            token_replacements.push((entity.old_token.clone(), new_token.clone()));
+        }
+
+        new_entities.push((
+            entity.entity_type.clone(),
+            entity.decrypted_value.clone(),
+            new_token,
+            entity.span_start,
+            entity.span_end,
+        ));
+    }
+
+    // 4) Load and rewrite masked_content
+    let masked_content: String = conn
+        .query_row(
+            "SELECT masked_content FROM items WHERE id = ?1",
+            rusqlite::params![item_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| {
+            let _ = conn.execute_batch("ROLLBACK;");
+            e.to_string()
+        })?;
+
+    let mut new_masked = masked_content;
+    // Sort by old_token length descending to avoid partial matches
+    token_replacements.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    for (old_tok, new_tok) in &token_replacements {
+        new_masked = new_masked.replace(old_tok, new_tok);
+    }
+
+    // 5) Update items.masked_content
+    conn.execute(
+        "UPDATE items SET masked_content = ?1 WHERE id = ?2",
+        rusqlite::params![new_masked, item_id],
+    )
+    .map_err(|e| {
+        let _ = conn.execute_batch("ROLLBACK;");
+        e.to_string()
+    })?;
+
+    // 6) Delete old entities and hash_mappings, re-insert with new tokens
+    conn.execute(
+        "DELETE FROM entities WHERE item_id = ?1",
+        rusqlite::params![item_id],
+    )
+    .map_err(|e| {
+        let _ = conn.execute_batch("ROLLBACK;");
+        e.to_string()
+    })?;
+
+    conn.execute(
+        "DELETE FROM hash_mappings WHERE item_id = ?1",
+        rusqlite::params![item_id],
+    )
+    .map_err(|e| {
+        let _ = conn.execute_batch("ROLLBACK;");
+        e.to_string()
+    })?;
+
+    let mut seen_hashes = HashSet::new();
+    for (entity_type, decrypted_value, token, span_start, span_end) in &new_entities {
+        let encrypted_value = if crypto::is_key_set() {
+            crypto::encrypt(decrypted_value).map_err(|e| {
+                let _ = conn.execute_batch("ROLLBACK;");
+                e
+            })?
+        } else {
+            decrypted_value.clone()
+        };
+
+        conn.execute(
+            "INSERT INTO entities (item_id, entity_type, original_value, token, span_start, span_end) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![item_id, entity_type, encrypted_value, token, span_start, span_end],
+        )
+        .map_err(|e| {
+            let _ = conn.execute_batch("ROLLBACK;");
+            e.to_string()
+        })?;
+
+        if let Some(hash) = extract_hash_from_token(token) {
+            if seen_hashes.insert(hash.clone()) {
+                conn.execute(
+                    "INSERT INTO hash_mappings (item_id, hash, original, entity_type) VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![item_id, hash, decrypted_value, entity_type],
+                )
+                .map_err(|e| {
+                    let _ = conn.execute_batch("ROLLBACK;");
+                    e.to_string()
+                })?;
+            }
+        }
+    }
+
+    conn.execute_batch("COMMIT;")
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
 }

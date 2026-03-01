@@ -41,7 +41,38 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, Box<dyn std::error::Error>
             UNIQUE(item_id, hash)
         );
         CREATE INDEX IF NOT EXISTS idx_hash_mappings_item ON hash_mappings(item_id);
-        CREATE INDEX IF NOT EXISTS idx_hash_mappings_hash ON hash_mappings(hash);",
+        CREATE INDEX IF NOT EXISTS idx_hash_mappings_hash ON hash_mappings(hash);
+
+        CREATE TABLE IF NOT EXISTS sessions (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS session_items (
+            id INTEGER PRIMARY KEY,
+            session_id INTEGER NOT NULL,
+            item_id INTEGER NOT NULL,
+            added_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+            FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+            UNIQUE(session_id, item_id)
+        );
+        CREATE TABLE IF NOT EXISTS session_entries (
+            id INTEGER PRIMARY KEY,
+            session_id INTEGER NOT NULL,
+            entry_type TEXT NOT NULL,
+            source_item_id INTEGER,
+            raw_content TEXT NOT NULL,
+            decoded_content TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+            FOREIGN KEY (source_item_id) REFERENCES items(id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_items_session ON session_items(session_id);
+        CREATE INDEX IF NOT EXISTS idx_session_items_item ON session_items(item_id);
+        CREATE INDEX IF NOT EXISTS idx_session_entries_session ON session_entries(session_id);",
     )?;
 
     // Enable foreign key enforcement
@@ -53,6 +84,7 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, Box<dyn std::error::Error>
         "ALTER TABLE items ADD COLUMN warning TEXT",
         "ALTER TABLE items ADD COLUMN raw_pdf_bytes BLOB",
         "ALTER TABLE items ADD COLUMN status TEXT NOT NULL DEFAULT 'done'",
+        "ALTER TABLE items ADD COLUMN session_id INTEGER",
     ];
     for sql in &migrations {
         match conn.execute_batch(sql) {
