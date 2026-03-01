@@ -1,0 +1,63 @@
+/* Aether Vault — Pixel Art Design Tokens */
+
+[data-theme='dark'] {
+	/* Backgrounds */
+	--bg-primary: #1a1a1a;
+	--bg-secondary: #222222;
+	--bg-surface: #2a2a2a;
+	--bg-elevated: #333333;
+
+	/* Accents */
+	--accent-yellow: #F5C542;
+	--accent-orange: #E8751A;
+	--accent-red: #D94E1F;
+	--accent-deep: #C0392B;
+
+	/* Text */
+	--text-primary: #F6F6F6;
+	--text-secondary: #999999;
+	--text-muted: #666666;
+
+	/* Borders */
+	--border: #333333;
+	--border-accent: #E8751A;
+
+	/* Entity type colors */
+	--entity-email: #3b82f6;
+	--entity-person: #22c55e;
+	--entity-org: #f97316;
+	--entity-amt: #ef4444;
+	--entity-phone: #a855f7;
+	--entity-api-key: #6b7280;
+}
+
+[data-theme='light'] {
+	/* Backgrounds */
+	--bg-primary: #FAF7F2;
+	--bg-secondary: #F0EDE6;
+	--bg-surface: #FFFFFF;
+	--bg-elevated: #F5F2ED;
+
+	/* Accents */
+	--accent-yellow: #D4952A;
+	--accent-orange: #C5611A;
+	--accent-red: #B8431A;
+	--accent-deep: #A22E1F;
+
+	/* Text */
+	--text-primary: #1A1A1A;
+	--text-secondary: #666666;
+	--text-muted: #999999;
+
+	/* Borders */
+	--border: #E0DDD6;
+	--border-accent: #C5611A;
+
+	/* Entity type colors */
+	--entity-email: #2563eb;
+	--entity-person: #16a34a;
+	--entity-org: #ea580c;
+	--entity-amt: #dc2626;
+	--entity-phone: #9333ea;
+	--entity-api-key: #6b7280;
+}

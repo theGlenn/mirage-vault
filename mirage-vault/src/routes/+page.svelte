@@ -3,302 +3,23 @@
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
   import { open } from '@tauri-apps/plugin-dialog';
   import { onMount } from 'svelte';
-  import { maskWithStrategy, getCurrentStrategyInfo } from '$lib/masking';
-  import MaskingStrategyConfig from '$lib/components/MaskingStrategyConfig.svelte';
+  import { detect } from '$lib/detectors';
+  import { mask } from '$lib/masker';
+  import Sidebar from '$lib/components/Sidebar.svelte';
+  import type { ActiveView } from '$lib/components/Sidebar.svelte';
+  import FileBrowser from '$lib/components/FileBrowser.svelte';
+  import SearchBar from '$lib/components/SearchBar.svelte';
+  import FileViewer from '$lib/components/FileViewer.svelte';
+  import type { ItemDetail } from '$lib/components/FileViewer.svelte';
+  import type { VaultItem } from '$lib/components/FileCard.svelte';
+  import EntityPanel from '$lib/components/EntityPanel.svelte';
+  import SettingsScreen from '$lib/components/SettingsScreen.svelte';
+  import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+  import { maskWithStrategy } from '$lib/masking';
 
   const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.csv', '.json', '.pdf'];
 
-  interface VaultItem {
-    id: number;
-    name: string;
-    file_type: string;
-    entity_count: number;
-    created_at: string;
-    warning: string | null;
-  }
-
-  interface EntityDetail {
-    id: number;
-    entity_type: string;
-    original_value: string;
-    token: string;
-    span_start: number;
-    span_end: number;
-  }
-
-  interface HashMappingOutput {
-    id: number;
-    hash: string;
-    original: string;
-    entity_type: string;
-  }
-
-  interface ItemDetail {
-    id: number;
-    name: string;
-    file_type: string;
-    raw_content: string;
-    masked_content: string;
-    created_at: string;
-    warning: string | null;
-    raw_pdf_bytes: number[] | null;
-    entities: EntityDetail[];
-  }
-
-  const ENTITY_TYPE_LABELS: Record<string, string> = {
-    EMAIL: 'Email',
-    PERSON: 'Person',
-    ORG: 'Organization',
-    AMT: 'Amount',
-    PHONE: 'Phone',
-    API_KEY: 'API Key'
-  };
-
-  interface EntityGroupItem {
-    original_value: string;
-    token: string;
-    count: number;
-  }
-
-  interface EntityGroup {
-    type: string;
-    label: string;
-    items: EntityGroupItem[];
-  }
-
-  function groupEntitiesByType(entities: EntityDetail[]): EntityGroup[] {
-    const groups: Map<string, Map<string, EntityGroupItem>> = new Map();
-    for (const e of entities) {
-      if (!groups.has(e.entity_type)) {
-        groups.set(e.entity_type, new Map());
-      }
-      const typeMap = groups.get(e.entity_type)!;
-      if (typeMap.has(e.token)) {
-        typeMap.get(e.token)!.count++;
-      } else {
-        typeMap.set(e.token, { original_value: e.original_value, token: e.token, count: 1 });
-      }
-    }
-
-    const typeOrder = ['EMAIL', 'PERSON', 'ORG', 'AMT', 'PHONE', 'API_KEY'];
-    const result: EntityGroup[] = [];
-    for (const type of typeOrder) {
-      const typeMap = groups.get(type);
-      if (typeMap && typeMap.size > 0) {
-        result.push({
-          type,
-          label: ENTITY_TYPE_LABELS[type] || type,
-          items: Array.from(typeMap.values())
-        });
-      }
-    }
-    return result;
-  }
-
-  interface TextSegment {
-    text: string;
-    entity?: EntityDetail;
-  }
-
-  function buildHighlightedSegments(text: string, entities: EntityDetail[]): TextSegment[] {
-    if (!entities.length) return [{ text }];
-    const sorted = entities
-      .filter((entity) => entity.span_start >= 0 && entity.span_end > entity.span_start && entity.span_end <= text.length)
-      .sort((a, b) => a.span_start - b.span_start);
-    if (!sorted.length) return [{ text }];
-    const segments: TextSegment[] = [];
-    let pos = 0;
-    for (const entity of sorted) {
-      if (entity.span_start < pos) {
-        continue;
-      }
-      if (entity.span_start > pos) {
-        segments.push({ text: text.substring(pos, entity.span_start) });
-      }
-      segments.push({ text: text.substring(entity.span_start, entity.span_end), entity });
-      pos = entity.span_end;
-    }
-    if (pos < text.length) {
-      segments.push({ text: text.substring(pos) });
-    }
-    return segments;
-  }
-
-  interface ContentBlock {
-    type: 'content' | 'marker';
-    text: string;
-    start: number;
-    end: number;
-  }
-
-  function splitByPageMarkers(text: string): ContentBlock[] {
-    const blocks: ContentBlock[] = [];
-    let lastIndex = 0;
-    const regex = /\n*--- Page \d+ ---\n*/g;
-    let match;
-    while ((match = regex.exec(text)) !== null) {
-      if (match.index > lastIndex) {
-        blocks.push({ type: 'content', text: text.substring(lastIndex, match.index), start: lastIndex, end: match.index });
-      }
-      const markerText = match[0].replace(/^\n+|\n+$/g, '');
-      blocks.push({ type: 'marker', text: markerText, start: match.index, end: match.index + match[0].length });
-      lastIndex = match.index + match[0].length;
-    }
-    if (lastIndex < text.length) {
-      blocks.push({ type: 'content', text: text.substring(lastIndex), start: lastIndex, end: text.length });
-    }
-    if (blocks.length === 0) {
-      blocks.push({ type: 'content', text, start: 0, end: text.length });
-    }
-    return blocks;
-  }
-
-  function getEntitiesForBlock(entities: EntityDetail[], block: ContentBlock): EntityDetail[] {
-    return entities
-      .filter(e => e.span_start >= block.start && e.span_end <= block.end)
-      .map(e => ({ ...e, span_start: e.span_start - block.start, span_end: e.span_end - block.start }));
-  }
-
-  interface HashTokenOccurrence {
-    type: string;
-    hash: string;
-  }
-
-  const HASH_TOKEN_PATTERN = /\[\[([A-Z_]+):([a-z0-9]+)\]\]/gi;
-
-  function normalizeHash(hash: string): string {
-    return hash.trim().toLowerCase();
-  }
-
-  function extractHashTokenOccurrences(maskedContent: string): HashTokenOccurrence[] {
-    const occurrences: HashTokenOccurrence[] = [];
-    HASH_TOKEN_PATTERN.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = HASH_TOKEN_PATTERN.exec(maskedContent)) !== null) {
-      const [, type, hash] = match;
-      if (!hash) continue;
-      occurrences.push({ type, hash: normalizeHash(hash) });
-    }
-    return occurrences;
-  }
-
-  function findUnusedTextMatch(
-    text: string,
-    query: string,
-    startAt: number,
-    usedSpans: Set<string>
-  ): number {
-    if (!query) return -1;
-
-    const findFrom = (from: number): number => {
-      let idx = text.indexOf(query, Math.max(0, from));
-      while (idx !== -1) {
-        const spanKey = `${idx}:${idx + query.length}`;
-        if (!usedSpans.has(spanKey)) {
-          return idx;
-        }
-        idx = text.indexOf(query, idx + 1);
-      }
-      return -1;
-    };
-
-    const fromCursor = findFrom(startAt);
-    if (fromCursor !== -1) {
-      return fromCursor;
-    }
-    return findFrom(0);
-  }
-
-  function resolveHashEntities(item: ItemDetail, hashMappings: HashMappingOutput[]): EntityDetail[] {
-    const occurrences = extractHashTokenOccurrences(item.masked_content);
-    if (!occurrences.length) {
-      return item.entities;
-    }
-
-    const hashSet = new Set(occurrences.map((occurrence) => occurrence.hash));
-    const hashEntities = item.entities.filter((entity) => hashSet.has(normalizeHash(entity.token)));
-    if (!hashEntities.length) {
-      return item.entities;
-    }
-
-    const queueByHash = new Map<string, EntityDetail[]>();
-    for (const entity of hashEntities) {
-      const key = normalizeHash(entity.token);
-      if (!queueByHash.has(key)) {
-        queueByHash.set(key, []);
-      }
-      queueByHash.get(key)!.push(entity);
-    }
-
-    const mappingByHash = new Map<string, { original: string; entity_type: string }>();
-    for (const mapping of hashMappings) {
-      mappingByHash.set(normalizeHash(mapping.hash), {
-        original: mapping.original,
-        entity_type: mapping.entity_type
-      });
-    }
-
-    // Fallback for legacy rows that only have values in entities table.
-    for (const entity of hashEntities) {
-      const key = normalizeHash(entity.token);
-      if (!mappingByHash.has(key)) {
-        mappingByHash.set(key, {
-          original: entity.original_value,
-          entity_type: entity.entity_type
-        });
-      }
-    }
-
-    const resolvedHashEntities: EntityDetail[] = [];
-    const usedSpans = new Set<string>();
-    let cursor = 0;
-
-    for (const occurrence of occurrences) {
-      const hash = occurrence.hash;
-      const queue = queueByHash.get(hash);
-      const baseEntity = queue && queue.length > 0 ? queue.shift() : undefined;
-      const mapping = mappingByHash.get(hash);
-      const originalValue = mapping?.original ?? baseEntity?.original_value;
-
-      if (!originalValue) {
-        continue;
-      }
-
-      const matchStart = findUnusedTextMatch(item.raw_content, originalValue, cursor, usedSpans);
-      const hasMatch = matchStart !== -1;
-      const spanStart = hasMatch ? matchStart : baseEntity?.span_start ?? 0;
-      const spanEnd = hasMatch ? matchStart + originalValue.length : baseEntity?.span_end ?? 0;
-
-      if (hasMatch) {
-        usedSpans.add(`${spanStart}:${spanEnd}`);
-        cursor = spanEnd;
-      }
-
-      resolvedHashEntities.push({
-        id: baseEntity?.id ?? -(resolvedHashEntities.length + 1),
-        entity_type: baseEntity?.entity_type ?? mapping?.entity_type ?? occurrence.type,
-        original_value: originalValue,
-        token: baseEntity?.token ?? hash,
-        span_start: spanStart,
-        span_end: spanEnd
-      });
-    }
-
-    for (const queue of queueByHash.values()) {
-      for (const leftover of queue) {
-        resolvedHashEntities.push(leftover);
-      }
-    }
-
-    const nonHashEntities = item.entities.filter((entity) => !hashSet.has(normalizeHash(entity.token)));
-
-    return [...nonHashEntities, ...resolvedHashEntities].sort((a, b) => {
-      if (a.span_start !== b.span_start) return a.span_start - b.span_start;
-      if (a.span_end !== b.span_end) return a.span_end - b.span_end;
-      return a.id - b.id;
-    });
-  }
-
+  let activeView: ActiveView = $state('browse');
   let items: VaultItem[] = $state([]);
   let selectedItemId: number | null = $state(null);
   let selectedItem: ItemDetail | null = $state(null);
@@ -308,14 +29,22 @@
   let processing = $state(false);
   let pasteText = $state('');
   let pasteProcessing = $state(false);
+  let searchQuery = $state('');
   let toastMessage = $state('');
   let toastTimeout: ReturnType<typeof setTimeout> | null = null;
 
+  let filteredItems: VaultItem[] = $derived(
+    searchQuery
+      ? items.filter(item => item.name.toLowerCase().includes(searchQuery.toLowerCase()))
+      : items
+  );
+
+  
   async function selectItem(id: number) {
     selectedItemId = id;
     viewMode = 'masked';
     const item = await invoke<ItemDetail>('get_item', { itemId: id });
-    if (extractHashTokenOccurrences(item.masked_content).length > 0) {
+    /*if (extractHashTokenOccurrences(item.masked_content).length > 0) {
       try {
         const hashMappings = await invoke<HashMappingOutput[]>('get_hash_mappings', { itemId: id });
         item.entities = resolveHashEntities(item, hashMappings);
@@ -323,7 +52,7 @@
         console.warn('Failed to load hash mappings for item:', id, err);
         item.entities = resolveHashEntities(item, []);
       }
-    }
+    }*/
     selectedItem = item;
   }
 
@@ -687,230 +416,74 @@
 </script>
 
 <div class="app-layout">
-  <!-- Left Sidebar: File List -->
-  <aside class="sidebar sidebar-left">
-    <div class="sidebar-header">
-      <h2>Files</h2>
-      {#if items.length > 0}
-        <button class="export-all-btn" onclick={exportAll} disabled={exportingAll}>
-          {exportingAll ? 'Exporting...' : 'Export All'}
-        </button>
-      {/if}
-    </div>
-    <div class="sidebar-content">
-      {#if items.length === 0}
-        <p class="empty-state">No files in vault</p>
-      {:else}
-        {#each items as item (item.id)}
-          <div class="file-item-row">
-            <button
-              class="file-item"
-              class:file-item-selected={selectedItemId === item.id}
-              onclick={() => selectItem(item.id)}
-            >
-              <div class="file-item-top">
-                <span class="file-name">{item.name}</span>
-                {#if item.warning}<span class="file-warning-icon" title="Extraction warning">&#9888;</span>{/if}
-                <span class="file-badge" class:file-badge-pdf={item.file_type === 'pdf'}>.{item.file_type}</span>
-              </div>
-              <div class="file-item-meta">
-                <span class="file-entity-count">{item.entity_count} {item.entity_count === 1 ? 'entity' : 'entities'}</span>
-                <span class="file-date">{formatDate(item.created_at)}</span>
-              </div>
-            </button>
-            <button
-              class="delete-btn"
-              title="Delete item"
-              onclick={(e: MouseEvent) => { e.stopPropagation(); confirmDeleteItem = item; }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="3 6 5 6 21 6"></polyline>
-                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
-                <path d="M10 11v6"></path>
-                <path d="M14 11v6"></path>
-              </svg>
-            </button>
-          </div>
-        {/each}
-      {/if}
-    </div>
-  </aside>
+  <!-- Left Sidebar: Navigation -->
+  <Sidebar {activeView} onnavigate={(view) => { activeView = view; if (view === 'settings') { selectedItemId = null; selectedItem = null; } }} />
 
-  <!-- Center: Content Viewer -->
+  <!-- Center: Content Area -->
   <main
     class="content-viewer"
     ondragover={(e: DragEvent) => e.preventDefault()}
     ondrop={(e: DragEvent) => e.preventDefault()}
   >
-    {#if selectedItem}
-      <div class="viewer-container">
-        <div class="viewer-toolbar">
-          <div class="view-toggle">
-            <button
-              class="toggle-btn"
-              class:toggle-btn-active={viewMode === 'masked'}
-              onclick={() => viewMode = 'masked'}
-            >Masked</button>
-            <button
-              class="toggle-btn"
-              class:toggle-btn-active={viewMode === 'original'}
-              onclick={() => viewMode = 'original'}
-            >Original</button>
-          </div>
-          <div class="toolbar-actions">
-            <button class="toolbar-btn" onclick={copyMaskedText}>Copy</button>
-            <button class="toolbar-btn" onclick={exportFile}>Export</button>
-            {#if selectedItem.file_type === 'pdf' && selectedItem.raw_pdf_bytes}
-              <button class="toolbar-btn" onclick={exportMaskedPdf}>Export PDF (experimental)</button>
-            {/if}
-          </div>
-        </div>
-        {#if viewMode === 'original'}
-          <div class="entity-legend">
-            {#each Object.entries(ENTITY_TYPE_LABELS) as [type, label]}
-              <span class="legend-item">
-                <span class="legend-swatch entity-{type.toLowerCase()}"></span>
-                {label}
-              </span>
-            {/each}
-          </div>
-        {/if}
-        {#if selectedItem.warning}
-          <div class="warning-banner">
-            <span class="warning-banner-icon">&#9888;</span>
-            <span>{selectedItem.warning}</span>
-          </div>
-        {/if}
-        {#if viewMode === 'masked'}
-          <div class="viewer-content">{#each splitByPageMarkers(selectedItem.masked_content) as seg}{#if seg.type === 'marker'}<div class="page-marker">{seg.text}</div>{:else}{seg.text}{/if}{/each}</div>
-        {:else}
-          <div class="viewer-content">{#each splitByPageMarkers(selectedItem.raw_content) as seg}{#if seg.type === 'marker'}<div class="page-marker">{seg.text}</div>{:else}{#each buildHighlightedSegments(seg.text, getEntitiesForBlock(selectedItem.entities, seg)) as segment}{#if segment.entity}<span class="entity-highlight entity-{segment.entity.entity_type.toLowerCase()}" data-tooltip="{'\u2192'} {segment.entity.token}">{segment.text}</span>{:else}{segment.text}{/if}{/each}{/if}{/each}</div>
-        {/if}
-      </div>
+    {#if activeView === 'settings'}
+      <SettingsScreen />
     {:else}
-      <div
-        class="drop-zone"
-        class:drop-zone-active={dragOver}
-        role="region"
-        aria-label="File drop zone"
-      >
-        <div class="drop-zone-icon">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-            <polyline points="14 2 14 8 20 8"></polyline>
-            <line x1="12" y1="18" x2="12" y2="12"></line>
-            <line x1="9" y1="15" x2="12" y2="12"></line>
-            <line x1="15" y1="15" x2="12" y2="12"></line>
-          </svg>
-        </div>
-        {#if processing}
-          <div class="loading-spinner"></div>
-          <p class="drop-zone-text">Processing files...</p>
-        {:else}
-          <p class="drop-zone-text">Drop .txt, .md, .csv, .json, or .pdf files here</p>
-        {/if}
-          <button class="paste-submit" onclick={selectFiles} disabled={processing} style="margin-top: 12px;">
-            {processing ? 'Processing...' : 'Select Files'}
-          </button>
-
-        <div class="paste-divider">or paste text</div>
-
-        <div class="paste-area">
-          <textarea
-            class="paste-textarea"
-            placeholder="Paste text to redact..."
-            bind:value={pasteText}
-            disabled={pasteProcessing}
-            rows="4"
-          ></textarea>
-          <button
-            class="paste-submit"
-            onclick={handlePasteSubmit}
-            disabled={pasteProcessing || !pasteText.trim()}
-          >
-            {#if pasteProcessing}
-              Processing...
-            {:else}
-              Redact & Save
-            {/if}
-          </button>
-        </div>
-
-        {#if errorMessage}
-          <p class="drop-zone-error">{errorMessage}</p>
-        {/if}
-      </div>
+      {#if selectedItem}
+        <FileViewer
+          {selectedItem}
+          {viewMode}
+          onclose={() => { selectedItemId = null; selectedItem = null; }}
+          oncopy={copyMaskedText}
+          onexport={exportFile}
+          onexportpdf={exportMaskedPdf}
+          ontoggleviewmode={(mode) => viewMode = mode}
+        />
+      {/if}
+      <FileBrowser
+        items={filteredItems}
+        {processing}
+        {errorMessage}
+        {dragOver}
+        bind:pasteText
+        {pasteProcessing}
+        {exportingAll}
+        onselectfile={(id) => selectItem(id)}
+        ondeletefile={(item) => confirmDeleteItem = item}
+        onselectfiles={selectFiles}
+        onpastesubmit={handlePasteSubmit}
+        onexportall={exportAll}
+      />
+      {#if items.length > 0}
+        <SearchBar bind:value={searchQuery} />
+      {/if}
+      {#if confirmDeleteItem}
+        <ConfirmDialog
+          message="Delete <strong>{confirmDeleteItem.name}</strong>? This cannot be undone."
+          confirmLabel="Delete"
+          cancelLabel="Cancel"
+          onconfirm={() => confirmDeleteItem && deleteItem(confirmDeleteItem)}
+          oncancel={() => confirmDeleteItem = null}
+        />
+      {/if}
     {/if}
   </main>
 
   <!-- Right Sidebar: Entity Panel -->
-  <aside class="sidebar sidebar-right">
-    <div class="sidebar-header">
-      <h2>Entities</h2>
-    </div>
-    <div class="sidebar-content">
-      {#if selectedItem}
-        {#each groupEntitiesByType(selectedItem.entities) as group (group.type)}
-          <div class="entity-group">
-            <div class="entity-group-header">
-              <span class="entity-group-swatch entity-{group.type.toLowerCase()}"></span>
-              {group.label}
-            </div>
-            {#each group.items as item (item.token)}
-              <div class="entity-group-item">
-                <div class="entity-group-item-value">{item.original_value}</div>
-                <div class="entity-group-item-meta">
-                  <span class="entity-group-item-token">{item.token}</span>
-                  <span class="entity-group-item-count">{item.count}x</span>
-                </div>
-              </div>
-            {/each}
-          </div>
-        {:else}
-          <p class="empty-state">No entities detected</p>
-        {/each}
-      {:else}
-        <p class="empty-state">No file selected</p>
-      {/if}
-    </div>
-    
-    <!-- Masking Strategy Configuration -->
-    <div class="sidebar-section">
-      <div class="sidebar-header">
-        <h2>Masking Strategy</h2>
-      </div>
-      <div class="sidebar-content">
-        <MaskingStrategyConfig />
-      </div>
-    </div>
-  </aside>
+  <EntityPanel {activeView} {selectedItem} {items} />
 </div>
 
 {#if toastMessage}
   <div class="toast">{toastMessage}</div>
 {/if}
 
-{#if confirmDeleteItem}
-  <div class="confirm-overlay" onclick={() => confirmDeleteItem = null} role="presentation">
-    <!-- svelte-ignore a11y_click_events_have_key_events a11y_interactive_supports_focus a11y_interactive_supports_focus -->
-    <div class="confirm-dialog" onclick={(e: MouseEvent) => e.stopPropagation()} role="dialog" aria-modal="true" tabindex="-1">
-      <p class="confirm-message">Delete <strong>{confirmDeleteItem.name}</strong>? This cannot be undone.</p>
-      <div class="confirm-actions">
-        <button class="confirm-cancel" onclick={() => confirmDeleteItem = null}>Cancel</button>
-        <button class="confirm-delete" onclick={() => confirmDeleteItem && deleteItem(confirmDeleteItem)}>Delete</button>
-      </div>
-    </div>
-  </div>
-{/if}
-
 <style>
 :root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+  font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
   font-size: 16px;
   line-height: 24px;
   font-weight: 400;
-  color: #0f0f0f;
-  background-color: #f6f6f6;
+  color: var(--text-primary);
+  background-color: var(--bg-primary);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -921,53 +494,7 @@
   display: flex;
   height: 100vh;
   overflow: hidden;
-}
-
-.sidebar {
-  width: 240px;
-  min-width: 240px;
-  display: flex;
-  flex-direction: column;
-  border-color: #e0e0e0;
-  background-color: #fafafa;
-}
-
-.sidebar-left {
-  border-right: 1px solid #e0e0e0;
-}
-
-.sidebar-right {
-  border-left: 1px solid #e0e0e0;
-}
-
-.sidebar-header {
-  padding: 16px;
-  border-bottom: 1px solid #e0e0e0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.sidebar-header h2 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #666;
-}
-
-.sidebar-content {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-}
-
-.empty-state {
-  color: #999;
-  font-size: 13px;
-  text-align: center;
-  margin-top: 24px;
+  background-color: var(--bg-primary);
 }
 
 .content-viewer {
@@ -976,789 +503,29 @@
   align-items: center;
   justify-content: center;
   overflow: hidden;
-}
-
-.drop-zone {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  width: 100%;
-  max-width: 480px;
-  margin: 24px;
-  padding: 48px 32px;
-  border: 2px dashed #ccc;
-  border-radius: 12px;
-  color: #888;
-  transition: border-color 0.2s, background-color 0.2s;
-}
-
-.drop-zone-active {
-  border-color: #396cd8;
-  background-color: rgba(57, 108, 216, 0.05);
-}
-
-.drop-zone-icon {
-  color: #bbb;
-}
-
-.drop-zone-active .drop-zone-icon {
-  color: #396cd8;
-}
-
-.drop-zone-text {
-  margin: 0;
-  font-size: 14px;
-}
-
-.drop-zone-error {
-  margin: 0;
-  font-size: 13px;
-  color: #d93025;
-  text-align: center;
-  max-width: 360px;
-}
-
-.file-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 10px;
-  border-radius: 6px;
-  margin-bottom: 4px;
-  font-size: 13px;
-  cursor: pointer;
-  border: none;
-  background: none;
-  text-align: left;
-  width: 100%;
-  color: inherit;
-  font-family: inherit;
-  transition: background-color 0.15s;
-}
-
-.file-item:hover {
-  background-color: #eee;
-}
-
-.file-item-selected {
-  background-color: #e0ecff;
-}
-
-.file-item-selected:hover {
-  background-color: #d4e3ff;
-}
-
-.file-item-top {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.file-name {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 500;
-}
-
-.file-badge {
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background-color: #e8e8e8;
-  color: #666;
-  flex-shrink: 0;
-}
-
-.file-badge-pdf {
-  background-color: #fee2e2;
-  color: #dc2626;
-  font-weight: 600;
-}
-
-.file-item-meta {
-  display: flex;
-  justify-content: space-between;
-  font-size: 11px;
-  color: #888;
-}
-
-.file-entity-count {
-  color: #666;
-}
-
-.file-date {
-  color: #999;
-}
-
-.loading-spinner {
-  width: 32px;
-  height: 32px;
-  border: 3px solid #e0e0e0;
-  border-top-color: #396cd8;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.paste-divider {
-  font-size: 12px;
-  color: #999;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin: 4px 0;
-}
-
-.paste-area {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: 100%;
-}
-
-.paste-textarea {
-  width: 100%;
-  padding: 10px;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  font-family: inherit;
-  font-size: 13px;
-  resize: vertical;
-  background: #fff;
-  color: #0f0f0f;
-  box-sizing: border-box;
-}
-
-.paste-textarea:focus {
-  outline: none;
-  border-color: #396cd8;
-}
-
-.paste-submit {
-  align-self: flex-end;
-  padding: 8px 16px;
-  border: none;
-  border-radius: 6px;
-  background-color: #396cd8;
-  color: #fff;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.paste-submit:hover:not(:disabled) {
-  background-color: #2d5bc4;
-}
-
-.paste-submit:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.viewer-container {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  height: 100%;
-}
-
-.viewer-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  border-bottom: 1px solid #e0e0e0;
-  flex-shrink: 0;
-}
-
-.view-toggle {
-  display: flex;
-  background-color: #e8e8e8;
-  border-radius: 6px;
-  padding: 2px;
-}
-
-.toggle-btn {
-  padding: 6px 16px;
-  border: none;
-  border-radius: 4px;
-  background: none;
-  font-size: 13px;
-  font-weight: 500;
-  color: #666;
-  cursor: pointer;
-  transition: background-color 0.15s, color 0.15s;
-  font-family: inherit;
-}
-
-.toggle-btn:hover:not(.toggle-btn-active) {
-  color: #333;
-}
-
-.toggle-btn-active {
-  background-color: #fff;
-  color: #0f0f0f;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-}
-
-.viewer-content {
-  flex: 1;
-  margin: 0;
-  padding: 16px;
-  overflow: auto;
-  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
-  font-size: 13px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  color: #0f0f0f;
-}
-
-.page-marker {
-  text-align: center;
-  color: #999;
-  font-size: 12px;
-  padding: 8px 0;
-  margin: 8px 0;
-  border-top: 1px solid #e0e0e0;
-  border-bottom: 1px solid #e0e0e0;
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  letter-spacing: 0.04em;
-  white-space: normal;
-}
-
-.entity-highlight {
-  border-radius: 2px;
-  padding: 1px 2px;
-  cursor: help;
+  background-color: var(--bg-primary);
   position: relative;
-  border-bottom: 2px solid;
 }
 
-.entity-highlight:hover::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  bottom: calc(100% + 4px);
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 4px 8px;
-  background: #333;
-  color: #fff;
-  font-size: 11px;
-  border-radius: 4px;
-  white-space: nowrap;
-  z-index: 10;
-  pointer-events: none;
-}
-
-.entity-email { background-color: rgba(37, 99, 235, 0.15); border-bottom-color: #2563eb; }
-.entity-person { background-color: rgba(22, 163, 74, 0.15); border-bottom-color: #16a34a; }
-.entity-org { background-color: rgba(234, 88, 12, 0.15); border-bottom-color: #ea580c; }
-.entity-amt { background-color: rgba(220, 38, 38, 0.15); border-bottom-color: #dc2626; }
-.entity-phone { background-color: rgba(147, 51, 234, 0.15); border-bottom-color: #9333ea; }
-.entity-api_key { background-color: rgba(107, 114, 128, 0.15); border-bottom-color: #6b7280; }
-
-.entity-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  padding: 8px 16px;
-  border-bottom: 1px solid #e0e0e0;
-  font-size: 12px;
-  color: #666;
-}
-
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.legend-swatch {
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  border-radius: 2px;
-  border-bottom: 2px solid;
-}
-
-.entity-group {
-  margin-bottom: 16px;
-}
-
-.entity-group-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #555;
-  margin-bottom: 6px;
-  padding-bottom: 4px;
-  border-bottom: 1px solid #e0e0e0;
-}
-
-.entity-group-swatch {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
-  border-bottom: 2px solid;
-}
-
-.entity-group-item {
-  padding: 6px 0;
-  border-bottom: 1px solid #f0f0f0;
-}
-
-.entity-group-item:last-child {
-  border-bottom: none;
-}
-
-.entity-group-item-value {
-  font-size: 13px;
-  font-weight: 500;
-  color: #222;
-  word-break: break-all;
-}
-
-.entity-group-item-meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 2px;
-  font-size: 11px;
-}
-
-.entity-group-item-token {
-  color: #888;
-  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
-}
-
-.entity-group-item-count {
-  color: #999;
-  font-weight: 500;
-}
-
-.toolbar-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.toolbar-btn {
-  padding: 6px 14px;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  background: #fff;
-  font-size: 13px;
-  font-weight: 500;
-  color: #333;
-  cursor: pointer;
-  font-family: inherit;
-  transition: background-color 0.15s, border-color 0.15s;
-}
-
-.toolbar-btn:hover {
-  background-color: #f0f0f0;
-  border-color: #bbb;
-}
-
+/* Toast */
 .toast {
   position: fixed;
   bottom: 24px;
   left: 50%;
   transform: translateX(-50%);
   padding: 10px 20px;
-  background: #333;
-  color: #fff;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
   font-size: 13px;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  border-radius: 0px;
+  border: 2px solid var(--border-accent);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   z-index: 100;
   pointer-events: none;
+  font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
-.export-all-btn {
-  padding: 4px 10px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  background: #fff;
-  font-size: 11px;
-  font-weight: 500;
-  color: #333;
-  cursor: pointer;
-  font-family: inherit;
-  transition: background-color 0.15s, border-color 0.15s;
-}
 
-.export-all-btn:hover:not(:disabled) {
-  background-color: #f0f0f0;
-  border-color: #bbb;
-}
-
-.export-all-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.file-item-row {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.file-item-row .file-item {
-  flex: 1;
-  min-width: 0;
-}
-
-.delete-btn {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: 4px;
-  background: none;
-  color: #999;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s, background-color 0.15s, color 0.15s;
-}
-
-.file-item-row:hover .delete-btn {
-  opacity: 1;
-}
-
-.delete-btn:hover {
-  background-color: #fee2e2;
-  color: #dc2626;
-}
-
-.confirm-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 200;
-}
-
-.confirm-dialog {
-  background: #fff;
-  border-radius: 10px;
-  padding: 24px;
-  max-width: 360px;
-  width: 90%;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-}
-
-.confirm-message {
-  margin: 0 0 20px;
-  font-size: 14px;
-  color: #333;
-  line-height: 1.5;
-}
-
-.confirm-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.confirm-cancel {
-  padding: 8px 16px;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  background: #fff;
-  font-size: 13px;
-  font-weight: 500;
-  color: #333;
-  cursor: pointer;
-  font-family: inherit;
-}
-
-.confirm-cancel:hover {
-  background-color: #f0f0f0;
-}
-
-.confirm-delete {
-  padding: 8px 16px;
-  border: none;
-  border-radius: 6px;
-  background: #dc2626;
-  font-size: 13px;
-  font-weight: 500;
-  color: #fff;
-  cursor: pointer;
-  font-family: inherit;
-}
-
-.confirm-delete:hover {
-  background: #b91c1c;
-}
-
-.warning-banner {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
-  background-color: #fef3c7;
-  border-bottom: 1px solid #f59e0b;
-  font-size: 13px;
-  color: #92400e;
-  flex-shrink: 0;
-}
-
-.warning-banner-icon {
-  font-size: 16px;
-  flex-shrink: 0;
-}
-
-.file-warning-icon {
-  font-size: 12px;
-  color: #d97706;
-  flex-shrink: 0;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #1a1a1a;
-  }
-
-  .sidebar {
-    background-color: #222;
-    border-color: #333;
-  }
-
-  .sidebar-left {
-    border-right-color: #333;
-  }
-
-  .sidebar-right {
-    border-left-color: #333;
-  }
-
-  .sidebar-header {
-    border-bottom-color: #333;
-  }
-
-  .sidebar-header h2 {
-    color: #999;
-  }
-
-  .drop-zone {
-    border-color: #444;
-    color: #888;
-  }
-
-  .drop-zone-active {
-    border-color: #5b8def;
-    background-color: rgba(91, 141, 239, 0.08);
-  }
-
-  .drop-zone-active .drop-zone-icon {
-    color: #5b8def;
-  }
-
-  .drop-zone-icon {
-    color: #555;
-  }
-
-  .drop-zone-error {
-    color: #f28b82;
-  }
-
-  .file-badge {
-    background-color: #333;
-    color: #aaa;
-  }
-
-  .file-badge-pdf {
-    background-color: rgba(220, 38, 38, 0.2);
-    color: #f87171;
-  }
-
-  .file-item:hover {
-    background-color: #2a2a2a;
-  }
-
-  .file-item-selected {
-    background-color: #1e3a5f;
-  }
-
-  .file-item-selected:hover {
-    background-color: #234570;
-  }
-
-  .file-entity-count {
-    color: #999;
-  }
-
-  .file-date {
-    color: #777;
-  }
-
-  .loading-spinner {
-    border-color: #444;
-    border-top-color: #5b8def;
-  }
-
-  .paste-textarea {
-    background: #2a2a2a;
-    color: #f6f6f6;
-    border-color: #444;
-  }
-
-  .paste-textarea:focus {
-    border-color: #5b8def;
-  }
-
-  .paste-submit {
-    background-color: #5b8def;
-  }
-
-  .paste-submit:hover:not(:disabled) {
-    background-color: #4a7ddf;
-  }
-
-  .viewer-toolbar {
-    border-bottom-color: #333;
-  }
-
-  .view-toggle {
-    background-color: #333;
-  }
-
-  .toggle-btn {
-    color: #999;
-  }
-
-  .toggle-btn:hover:not(.toggle-btn-active) {
-    color: #ccc;
-  }
-
-  .toggle-btn-active {
-    background-color: #444;
-    color: #f6f6f6;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-  }
-
-  .viewer-content {
-    color: #f6f6f6;
-  }
-
-  .page-marker {
-    color: #777;
-    border-top-color: #444;
-    border-bottom-color: #444;
-  }
-
-  .entity-highlight:hover::after {
-    background: #555;
-  }
-
-  .entity-legend {
-    border-bottom-color: #333;
-    color: #999;
-  }
-
-  .entity-group-header {
-    color: #999;
-    border-bottom-color: #333;
-  }
-
-  .entity-group-item {
-    border-bottom-color: #2a2a2a;
-  }
-
-  .entity-group-item-value {
-    color: #e0e0e0;
-  }
-
-  .entity-group-item-token {
-    color: #777;
-  }
-
-  .entity-group-item-count {
-    color: #777;
-  }
-
-  .toolbar-btn {
-    background: #333;
-    color: #ddd;
-    border-color: #555;
-  }
-
-  .toolbar-btn:hover {
-    background-color: #444;
-    border-color: #666;
-  }
-
-  .export-all-btn {
-    background: #333;
-    color: #ddd;
-    border-color: #555;
-  }
-
-  .export-all-btn:hover:not(:disabled) {
-    background-color: #444;
-    border-color: #666;
-  }
-
-  .toast {
-    background: #555;
-  }
-
-  .delete-btn {
-    color: #777;
-  }
-
-  .delete-btn:hover {
-    background-color: rgba(220, 38, 38, 0.2);
-    color: #f87171;
-  }
-
-  .confirm-dialog {
-    background: #2a2a2a;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-  }
-
-  .confirm-message {
-    color: #e0e0e0;
-  }
-
-  .confirm-cancel {
-    background: #333;
-    color: #ddd;
-    border-color: #555;
-  }
-
-  .confirm-cancel:hover {
-    background-color: #444;
-  }
-
-  .warning-banner {
-    background-color: rgba(245, 158, 11, 0.15);
-    border-bottom-color: #b45309;
-    color: #fbbf24;
-  }
-
-  .file-warning-icon {
-    color: #fbbf24;
-  }
-}
 </style>

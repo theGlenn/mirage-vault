@@ -1,0 +1,154 @@
+{
+  "project": "Aether Vault",
+  "branchName": "ralph/pdf-support",
+  "description": "Phase 1b - PDF Support: Add PDF file ingestion to the Vault app using lopdf for Rust-side text extraction. PDFs flow through the existing detection and masking pipeline. Includes page markers, extraction warnings, .txt export, and experimental masked PDF export.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add warning and raw_pdf_bytes columns to items table",
+      "description": "As a developer, I need schema changes to support PDF-specific data so that extraction warnings and original PDF bytes can be stored.",
+      "acceptanceCriteria": [
+        "Add 'warning' TEXT column (nullable) to items table using ALTER TABLE IF NOT EXISTS or equivalent idempotent migration",
+        "Add 'raw_pdf_bytes' BLOB column (nullable) to items table using ALTER TABLE IF NOT EXISTS or equivalent idempotent migration",
+        "Existing items are unaffected (new columns default to NULL)",
+        "Update the get_item command response struct to include 'warning' (Option<String>) field",
+        "Update the save_item command to accept an optional 'warning' (Option<String>) parameter",
+        "Update the save_item command to accept an optional 'raw_pdf_bytes' (Option<Vec<u8>>) parameter",
+        "Update the list_items response struct to include 'warning' (Option<String>) so the file list can show warning indicators",
+        "cargo check passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Use ALTER TABLE ADD COLUMN wrapped in a check to make it idempotent. rusqlite will error if the column already exists, so catch that error and ignore it."
+    },
+    {
+      "id": "US-002",
+      "title": "Add lopdf dependency and extract_pdf_text Tauri command",
+      "description": "As a developer, I need a Rust command that extracts text from PDF bytes so the frontend can process PDF content through the existing masking pipeline.",
+      "acceptanceCriteria": [
+        "Add lopdf crate to Cargo.toml",
+        "Create extract_pdf_text Tauri command that accepts PDF content as Vec<u8>",
+        "Command loads the PDF via lopdf::Document::load_from() using a Cursor over the bytes",
+        "Text is extracted page by page using document.extract_text(&[page_number]) for each page in document.get_pages()",
+        "Pages are concatenated with '\\n\\n--- Page N ---\\n\\n' markers between them",
+        "Command returns a struct with: text (String), page_count (u32), has_warning (bool)",
+        "If the entire PDF yields zero text (empty string after trimming), return an error: 'No extractable text found. This may be a scanned document.'",
+        "If some pages have text and others don't, return partial text with has_warning set to true",
+        "If lopdf fails to parse the file entirely, return an error: 'Failed to parse PDF file.'",
+        "Command is registered in the Tauri builder via generate_handler!",
+        "cargo check passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "lopdf::Document::load_from() accepts impl Read. Use std::io::Cursor<Vec<u8>> to wrap the bytes. document.get_pages() returns a BTreeMap<u32, ObjectId> — iterate sorted keys for page order."
+    },
+    {
+      "id": "US-003",
+      "title": "Add export_masked_pdf Tauri command",
+      "description": "As a developer, I need a Rust command that creates a masked version of a PDF by replacing entity values with tokens in the original document.",
+      "acceptanceCriteria": [
+        "Create export_masked_pdf Tauri command that accepts: original PDF bytes (Vec<u8>), a list of replacement pairs ({original: String, token: String}), and uses a native save dialog",
+        "Command loads the original PDF via lopdf::Document::load_from()",
+        "For each replacement pair, calls document.replace_text() to substitute original values with token strings",
+        "Opens a native save dialog with default filename '[name]_masked.pdf' via tauri_plugin_dialog",
+        "Saves the modified PDF to the chosen path via document.save_to()",
+        "Returns Ok(true) on success, Ok(false) if user cancels the dialog",
+        "If replace_text() or save fails, return an error string describing the failure",
+        "Define a ReplacementPair serde struct with 'original' and 'token' String fields",
+        "Command is registered in the Tauri builder via generate_handler!",
+        "cargo check passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "lopdf replace_text() may not work for all font encodings. The frontend should catch errors and fall back to .txt export."
+    },
+    {
+      "id": "US-004",
+      "title": "Update drop zone to accept PDF files and wire ingestion",
+      "description": "As a user, I want to drop PDF files into the vault so they are automatically extracted, masked, and stored.",
+      "acceptanceCriteria": [
+        "Drop zone accepts .pdf files in addition to .txt, .md, .csv, .json",
+        "Drop zone instructional text updated to include .pdf in the list of supported formats",
+        "When a .pdf file is dropped, read file as ArrayBuffer via FileReader (not as text)",
+        "Convert ArrayBuffer to Uint8Array and pass to invoke('extract_pdf_text', { content: Array.from(uint8array) })",
+        "On success: feed extracted text through detect() and mask() pipeline, then call save_item with file_type 'pdf', the extracted text as raw_content, masked text as masked_content, warning if has_warning is true, and the original PDF bytes as raw_pdf_bytes",
+        "On extraction error: show error toast with the error message, do not save to vault",
+        "After saving, refresh the file list",
+        "pnpm check passes",
+        "Verify in browser using dev tools"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "PDF files must be read as ArrayBuffer (not text). The bytes are sent to Rust as Vec<u8> via invoke. Non-PDF files continue to use FileReader.readAsText() as before."
+    },
+    {
+      "id": "US-005",
+      "title": "Display extraction warnings for PDF items",
+      "description": "As a user, I want to see a warning when a PDF was only partially extracted so I know the results may be incomplete.",
+      "acceptanceCriteria": [
+        "When a PDF item with a non-null warning is selected, display a yellow warning banner above the content viewer text: 'Some pages in this PDF could not be extracted. Results may be incomplete.'",
+        "The warning text comes from the item's warning field in the database",
+        "Warning banner is styled distinctly (yellow/amber background, warning icon or prefix)",
+        "Warning banner is visible in both Masked and Original view modes",
+        "Non-PDF items or PDFs without warnings do not show any banner",
+        "Items in the file list sidebar show a small warning indicator (e.g., ⚠ icon) next to the file name if they have a warning",
+        "pnpm check passes",
+        "Verify in browser using dev tools"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Style page markers in content viewer for PDF items",
+      "description": "As a user, I want page boundaries clearly visible in the content viewer so I can understand the document structure.",
+      "acceptanceCriteria": [
+        "Page markers ('--- Page N ---') in both Masked and Original views are visually styled differently from content text",
+        "Page markers are rendered as centered text with muted color and horizontal rules above and below",
+        "Page markers are NOT treated as entity-detectable content: the buildHighlightedSegments() function skips page marker regions so they are not highlighted or detected as entities",
+        "Entity highlights work correctly on the text between page markers",
+        "PDF items show a .pdf badge in the file list (visually distinct from .txt, .md, etc.)",
+        "pnpm check passes",
+        "Verify in browser using dev tools"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "Page marker detection can use a simple regex: /\\n?--- Page \\d+ ---\\n?/g to identify marker positions in the text."
+    },
+    {
+      "id": "US-007",
+      "title": "Export PDF masked content as .txt file",
+      "description": "As a user, I want to export the masked version of a PDF as a text file so I can use it externally.",
+      "acceptanceCriteria": [
+        "When exporting a PDF item via the existing Export button, the save dialog defaults to [original_name]_masked.txt (not .pdf)",
+        "The exported .txt file contains the masked text including page markers",
+        "Clipboard copy works the same as other file types (copies full masked text)",
+        "Batch zip export includes PDF items as [name]_masked.txt files",
+        "The existing export_file Tauri command is reused — the frontend passes 'txt' as the file extension for PDF items",
+        "pnpm check passes"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "This mostly works already — just need to ensure that when file_type is 'pdf', the export uses .txt extension instead of .pdf."
+    },
+    {
+      "id": "US-008",
+      "title": "Add experimental masked PDF export button",
+      "description": "As a user, I want the option to export a masked PDF that preserves the original layout so I can share redacted documents in their original format.",
+      "acceptanceCriteria": [
+        "When viewing a PDF item, an additional button appears in the toolbar: 'Export PDF (experimental)'",
+        "The button is only visible for items where file_type is 'pdf'",
+        "Clicking the button calls invoke('export_masked_pdf') with the original PDF bytes from raw_pdf_bytes and the entity mappings (original_value -> token) from the item's entities",
+        "On success, show a toast: 'Masked PDF exported'",
+        "On error, show a toast: 'PDF export failed — falling back to text export' and trigger the standard .txt export",
+        "The button is labeled with '(experimental)' to set expectations",
+        "pnpm check passes",
+        "Verify in browser using dev tools"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "raw_pdf_bytes comes from the get_item response. It may need to be base64-decoded on the frontend before passing back to Rust as an array."
+    }
+  ]
+}
