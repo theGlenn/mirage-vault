@@ -46,18 +46,109 @@ function normalizeEntityType(type: string): string {
   return OLLAMA_TYPE_ALIASES[normalized] ?? normalized;
 }
 
-function extractEntityTypesByHash(maskedText: string): Map<string, string> {
-  const typesByHash = new Map<string, string>();
-  const tokenPattern = /\[\[([A-Z_]+):([a-z0-9]+)\]\]/gi;
+interface MaskTokenMatch {
+  type: string;
+  hash: string;
+  token: string;
+}
+
+function extractMaskTokenMatches(maskedText: string): MaskTokenMatch[] {
+  const matches: MaskTokenMatch[] = [];
+  const tokenPattern = /\[\[([A-Z_]+):([A-Za-z0-9]+)\]\]/g;
 
   let match: RegExpExecArray | null;
   while ((match = tokenPattern.exec(maskedText)) !== null) {
-    const [, type, hash] = match;
-    if (!hash) continue;
-    typesByHash.set(hash.toLowerCase(), normalizeEntityType(type));
+    const [, type, rawHash] = match;
+    if (!rawHash) continue;
+    const hash = rawHash.toLowerCase();
+    const normalizedType = normalizeEntityType(type);
+    matches.push({
+      type: normalizedType,
+      hash,
+      token: `[[${normalizedType}:${hash}]]`,
+    });
+  }
+
+  return matches;
+}
+
+function extractEntityTypesByHash(maskedText: string): Map<string, string> {
+  const typesByHash = new Map<string, string>();
+  for (const match of extractMaskTokenMatches(maskedText)) {
+    typesByHash.set(match.hash, match.type);
   }
 
   return typesByHash;
+}
+
+function buildFallbackMaskedText(
+  text: string,
+  originalsByHash: Map<string, string>,
+  typesByHash: Map<string, string>
+): string {
+  let maskedText = text;
+  const replacements = Array.from(originalsByHash.entries())
+    .filter(([, original]) => original.length > 0)
+    .sort((a, b) => b[1].length - a[1].length);
+
+  for (const [hash, original] of replacements) {
+    const type = typesByHash.get(hash) ?? 'PII';
+    const token = `[[${type}:${hash}]]`;
+    maskedText = maskedText.split(original).join(token);
+  }
+
+  return maskedText;
+}
+
+function buildOllamaMappings(
+  originalText: string,
+  maskedText: string,
+  originalsByHash: Map<string, string>
+): UnifiedMaskResult['mappings'] {
+  const tokenMatches = extractMaskTokenMatches(maskedText);
+  const mappings: UnifiedMaskResult['mappings'] = [];
+  const nextSearchStartByValue = new Map<string, number>();
+
+  for (const tokenMatch of tokenMatches) {
+    const original = originalsByHash.get(tokenMatch.hash);
+    if (!original) continue;
+
+    const searchStart = nextSearchStartByValue.get(original) ?? 0;
+    let start = originalText.indexOf(original, searchStart);
+    if (start === -1) {
+      start = originalText.indexOf(original);
+    }
+    const end = start === -1 ? 0 : start + original.length;
+
+    if (start !== -1) {
+      nextSearchStartByValue.set(original, end);
+    }
+
+    mappings.push({
+      hash: tokenMatch.hash,
+      token: tokenMatch.token,
+      original,
+      type: tokenMatch.type,
+      start: start === -1 ? 0 : start,
+      end,
+    });
+  }
+
+  if (mappings.length > 0) {
+    return mappings;
+  }
+
+  return Array.from(originalsByHash.entries()).map(([hash, original]) => {
+    const start = originalText.indexOf(original);
+    return {
+      hash,
+      token: `[[PII:${hash}]]`,
+      original,
+      type: 'PII',
+      start: start === -1 ? 0 : start,
+      end: start === -1 ? 0 : start + original.length,
+    };
+  });
 }
 
 /**
@@ -134,24 +225,32 @@ async function maskWithOllama(
     return await maskWithNlp(text);
   }
   
-  const result = await maskWithLlm(text, config.ollama.useJsonFormat);
-  const typesByHash = extractEntityTypesByHash(result.maskedText);
-  
-  const mappings = Array.from(result.mappings.entries()).map(([hash, original]) => ({
-    hash,
-    original,
-    type: typesByHash.get(hash.toLowerCase()) ?? 'PII',
-    start: 0,
-    end: 0,
-  }));
+  const llmResult = await maskWithLlm(text, config.ollama.useJsonFormat);
+
+  const originalsByHash = new Map<string, string>();
+  for (const [hash, original] of llmResult.mappings.entries()) {
+    if (!hash || !original) continue;
+    originalsByHash.set(hash.toLowerCase(), original);
+  }
+
+  let maskedText = llmResult.maskedText;
+  let typesByHash = extractEntityTypesByHash(maskedText);
+
+  // Some models return mappings but fail to apply replacements in masked_text.
+  if (typesByHash.size === 0 && originalsByHash.size > 0) {
+    maskedText = buildFallbackMaskedText(text, originalsByHash, typesByHash);
+    typesByHash = extractEntityTypesByHash(maskedText);
+  }
+
+  const mappings = buildOllamaMappings(text, maskedText, originalsByHash);
   
   return {
-    maskedText: result.maskedText,
+    maskedText,
     mappings,
     strategy: 'ollama',
     timing: {
       totalMs: performance.now() - startTime,
-      llmMs: result.metadata.durationMs,
+      llmMs: llmResult.metadata.durationMs,
     },
   };
 }

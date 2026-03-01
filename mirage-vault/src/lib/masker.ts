@@ -26,6 +26,49 @@ function generateHash(text: string): string {
 	return Math.abs(hash).toString(16).padStart(8, '0').substring(0, 8);
 }
 
+function resolveDetection(
+	text: string,
+	detection: Detection,
+	cursor: number
+): Detection | null {
+	const textLength = text.length;
+	const boundedStart = Number.isFinite(detection.start)
+		? Math.max(0, Math.min(textLength, detection.start))
+		: -1;
+	const boundedEnd = Number.isFinite(detection.end)
+		? Math.max(0, Math.min(textLength, detection.end))
+		: -1;
+
+	if (boundedStart >= 0 && boundedEnd > boundedStart) {
+		const slice = text.slice(boundedStart, boundedEnd);
+		if (slice === detection.value) {
+			return {
+				...detection,
+				value: slice,
+				start: boundedStart,
+				end: boundedEnd
+			};
+		}
+	}
+
+	if (!detection.value) {
+		return null;
+	}
+
+	// LLM/refinement can return approximate offsets; anchor to the actual value.
+	const searchStart = Math.max(cursor, 0);
+	const foundStart = text.indexOf(detection.value, searchStart);
+	if (foundStart === -1) {
+		return null;
+	}
+
+	return {
+		...detection,
+		start: foundStart,
+		end: foundStart + detection.value.length
+	};
+}
+
 export function mask(text: string, detections: Detection[]): MaskResult {
 	const valueToHash = new Map<string, string>();
 	const hashMappings = new Map<string, string>();
@@ -38,30 +81,35 @@ export function mask(text: string, detections: Detection[]): MaskResult {
 	let cursor = 0;
 
 	for (const det of sorted) {
-		// Append text between previous detection and this one
-		result += text.slice(cursor, det.start);
-
-		let hash = valueToHash.get(det.value);
-
-		if (!hash) {
-			hash = generateHash(det.value);
-			valueToHash.set(det.value, hash);
-			hashMappings.set(hash, det.value);
+		const resolved = resolveDetection(text, det, cursor);
+		if (!resolved || resolved.start < cursor) {
+			continue;
 		}
 
-		const token = `[[${det.type}:${hash}]]`;
+		// Append text between previous detection and this one
+		result += text.slice(cursor, resolved.start);
+
+		let hash = valueToHash.get(resolved.value);
+
+		if (!hash) {
+			hash = generateHash(resolved.value);
+			valueToHash.set(resolved.value, hash);
+			hashMappings.set(hash, resolved.value);
+		}
+
+		const token = `[[${resolved.type}:${hash}]]`;
 
 		result += token;
 		mappings.push({
 			token,
 			hash,
-			original: det.value,
-			type: det.type,
-			start: det.start,
-			end: det.end
+			original: resolved.value,
+			type: resolved.type,
+			start: resolved.start,
+			end: resolved.end
 		});
 
-		cursor = det.end;
+		cursor = resolved.end;
 	}
 
 	// Append remaining text
