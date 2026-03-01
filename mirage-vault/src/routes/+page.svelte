@@ -26,6 +26,13 @@
     span_end: number;
   }
 
+  interface HashMappingOutput {
+    id: number;
+    hash: string;
+    original: string;
+    entity_type: string;
+  }
+
   interface ItemDetail {
     id: number;
     name: string;
@@ -95,10 +102,16 @@
 
   function buildHighlightedSegments(text: string, entities: EntityDetail[]): TextSegment[] {
     if (!entities.length) return [{ text }];
-    const sorted = [...entities].sort((a, b) => a.span_start - b.span_start);
+    const sorted = entities
+      .filter((entity) => entity.span_start >= 0 && entity.span_end > entity.span_start && entity.span_end <= text.length)
+      .sort((a, b) => a.span_start - b.span_start);
+    if (!sorted.length) return [{ text }];
     const segments: TextSegment[] = [];
     let pos = 0;
     for (const entity of sorted) {
+      if (entity.span_start < pos) {
+        continue;
+      }
       if (entity.span_start > pos) {
         segments.push({ text: text.substring(pos, entity.span_start) });
       }
@@ -146,6 +159,146 @@
       .map(e => ({ ...e, span_start: e.span_start - block.start, span_end: e.span_end - block.start }));
   }
 
+  interface HashTokenOccurrence {
+    type: string;
+    hash: string;
+  }
+
+  const HASH_TOKEN_PATTERN = /\[\[([A-Z_]+):([a-z0-9]+)\]\]/gi;
+
+  function normalizeHash(hash: string): string {
+    return hash.trim().toLowerCase();
+  }
+
+  function extractHashTokenOccurrences(maskedContent: string): HashTokenOccurrence[] {
+    const occurrences: HashTokenOccurrence[] = [];
+    HASH_TOKEN_PATTERN.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = HASH_TOKEN_PATTERN.exec(maskedContent)) !== null) {
+      const [, type, hash] = match;
+      if (!hash) continue;
+      occurrences.push({ type, hash: normalizeHash(hash) });
+    }
+    return occurrences;
+  }
+
+  function findUnusedTextMatch(
+    text: string,
+    query: string,
+    startAt: number,
+    usedSpans: Set<string>
+  ): number {
+    if (!query) return -1;
+
+    const findFrom = (from: number): number => {
+      let idx = text.indexOf(query, Math.max(0, from));
+      while (idx !== -1) {
+        const spanKey = `${idx}:${idx + query.length}`;
+        if (!usedSpans.has(spanKey)) {
+          return idx;
+        }
+        idx = text.indexOf(query, idx + 1);
+      }
+      return -1;
+    };
+
+    const fromCursor = findFrom(startAt);
+    if (fromCursor !== -1) {
+      return fromCursor;
+    }
+    return findFrom(0);
+  }
+
+  function resolveHashEntities(item: ItemDetail, hashMappings: HashMappingOutput[]): EntityDetail[] {
+    const occurrences = extractHashTokenOccurrences(item.masked_content);
+    if (!occurrences.length) {
+      return item.entities;
+    }
+
+    const hashSet = new Set(occurrences.map((occurrence) => occurrence.hash));
+    const hashEntities = item.entities.filter((entity) => hashSet.has(normalizeHash(entity.token)));
+    if (!hashEntities.length) {
+      return item.entities;
+    }
+
+    const queueByHash = new Map<string, EntityDetail[]>();
+    for (const entity of hashEntities) {
+      const key = normalizeHash(entity.token);
+      if (!queueByHash.has(key)) {
+        queueByHash.set(key, []);
+      }
+      queueByHash.get(key)!.push(entity);
+    }
+
+    const mappingByHash = new Map<string, { original: string; entity_type: string }>();
+    for (const mapping of hashMappings) {
+      mappingByHash.set(normalizeHash(mapping.hash), {
+        original: mapping.original,
+        entity_type: mapping.entity_type
+      });
+    }
+
+    // Fallback for legacy rows that only have values in entities table.
+    for (const entity of hashEntities) {
+      const key = normalizeHash(entity.token);
+      if (!mappingByHash.has(key)) {
+        mappingByHash.set(key, {
+          original: entity.original_value,
+          entity_type: entity.entity_type
+        });
+      }
+    }
+
+    const resolvedHashEntities: EntityDetail[] = [];
+    const usedSpans = new Set<string>();
+    let cursor = 0;
+
+    for (const occurrence of occurrences) {
+      const hash = occurrence.hash;
+      const queue = queueByHash.get(hash);
+      const baseEntity = queue && queue.length > 0 ? queue.shift() : undefined;
+      const mapping = mappingByHash.get(hash);
+      const originalValue = mapping?.original ?? baseEntity?.original_value;
+
+      if (!originalValue) {
+        continue;
+      }
+
+      const matchStart = findUnusedTextMatch(item.raw_content, originalValue, cursor, usedSpans);
+      const hasMatch = matchStart !== -1;
+      const spanStart = hasMatch ? matchStart : baseEntity?.span_start ?? 0;
+      const spanEnd = hasMatch ? matchStart + originalValue.length : baseEntity?.span_end ?? 0;
+
+      if (hasMatch) {
+        usedSpans.add(`${spanStart}:${spanEnd}`);
+        cursor = spanEnd;
+      }
+
+      resolvedHashEntities.push({
+        id: baseEntity?.id ?? -(resolvedHashEntities.length + 1),
+        entity_type: baseEntity?.entity_type ?? mapping?.entity_type ?? occurrence.type,
+        original_value: originalValue,
+        token: baseEntity?.token ?? hash,
+        span_start: spanStart,
+        span_end: spanEnd
+      });
+    }
+
+    for (const queue of queueByHash.values()) {
+      for (const leftover of queue) {
+        resolvedHashEntities.push(leftover);
+      }
+    }
+
+    const nonHashEntities = item.entities.filter((entity) => !hashSet.has(normalizeHash(entity.token)));
+
+    return [...nonHashEntities, ...resolvedHashEntities].sort((a, b) => {
+      if (a.span_start !== b.span_start) return a.span_start - b.span_start;
+      if (a.span_end !== b.span_end) return a.span_end - b.span_end;
+      return a.id - b.id;
+    });
+  }
+
   let items: VaultItem[] = $state([]);
   let selectedItemId: number | null = $state(null);
   let selectedItem: ItemDetail | null = $state(null);
@@ -161,7 +314,17 @@
   async function selectItem(id: number) {
     selectedItemId = id;
     viewMode = 'masked';
-    selectedItem = await invoke<ItemDetail>('get_item', { itemId: id });
+    const item = await invoke<ItemDetail>('get_item', { itemId: id });
+    if (extractHashTokenOccurrences(item.masked_content).length > 0) {
+      try {
+        const hashMappings = await invoke<HashMappingOutput[]>('get_hash_mappings', { itemId: id });
+        item.entities = resolveHashEntities(item, hashMappings);
+      } catch (err) {
+        console.warn('Failed to load hash mappings for item:', id, err);
+        item.entities = resolveHashEntities(item, []);
+      }
+    }
+    selectedItem = item;
   }
 
   function formatDate(dateStr: string): string {
