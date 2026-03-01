@@ -1,0 +1,234 @@
+## Codebase Patterns
+- Tauri 2 app: Rust backend in `aether-vault/src-tauri/src/`, frontend in `aether-vault/src/`
+- Frontend TypeScript modules live in `aether-vault/src/lib/` (SvelteKit `$lib` alias)
+- `@types/node` is installed for `node:test` and `node:assert` type support
+- Run tests with `npx tsx --test <file>` from the `aether-vault/` directory
+- Detection types defined in `src/lib/detectors/types.ts`: `Detection` interface and `EntityType` union
+- Must `use tauri::Manager;` to access `.manage()` and `.path()` on App/AppHandle
+- Database state uses `Mutex<Connection>` wrapped in a struct: `DbState(pub Mutex<Connection>)`
+- SQLite DB stored in Tauri app data dir (`app.path().app_data_dir()`)
+- Use `CREATE TABLE IF NOT EXISTS` for idempotent schema creation
+- `detect()` from `$lib/detectors` is the unified entry point for all entity detection — import from `$lib/detectors` (not regex/nlp directly)
+- Toolbar action buttons use `.toolbar-btn` class; add new buttons alongside Copy in the `.viewer-toolbar` (right side via `justify-content: space-between`)
+- Toast notifications: set `toastMessage` state string + `setTimeout` to clear; reuse for any brief user feedback
+- `cargo check` runs from `aether-vault/src-tauri/`
+- Inside `<pre>` tags, Svelte template blocks (`{#each}`, `{#if}`) must be on one line to avoid injecting whitespace
+- compromise `.people()` and `.organizations()` return entity text; use `indexOf()` loop to get positions in source text
+- NLP tests should use `>=` assertions since compromise may detect additional entities beyond expectations
+- Foreign keys enabled via `PRAGMA foreign_keys = ON`
+- Tauri commands use `State<'_, DbState>` for DB access; lock mutex with `db.0.lock()`
+- Commands return `Result<T, String>` — map rusqlite errors with `.map_err(|e| e.to_string())`
+- Serde structs: `Deserialize` for inputs, `Serialize` for outputs
+- Commands registered in `lib.rs` via `tauri::generate_handler![]` with `commands::` prefix
+- Tauri plugins: register in `lib.rs` via `.plugin()`, add permissions in `capabilities/default.json`
+- Native dialogs: use `tauri_plugin_dialog` — import `DialogExt` trait, call `app.dialog().file()` for file dialogs
+- Async Tauri commands with `pub async fn` when using dialog blocking methods
+- `blocking_save_file()` returns `Option<FilePath>` — use `.as_path().unwrap()` to get `&Path`
+- Tauri `invoke()` uses camelCase parameter names (e.g., `fileType`, `rawContent`), which map to snake_case Rust params automatically
+- lopdf: use `Document::load_from(Cursor::new(bytes))` for in-memory PDF loading; `doc.get_pages()` returns sorted `BTreeMap<u32, ObjectId>`; `doc.extract_text(&[page])` returns text per page
+- lopdf `replace_text()` takes 3 args: `(page_number: u32, text: &str, other_text: &str)` — must iterate per page; `save_to()` takes `&mut W: Write`, use `File::create()` then pass `&mut file`
+- `refreshItems()` pattern: call `invoke<T[]>('list_items')` after any mutation to keep sidebar in sync
+- Page marker regex: `/\n*--- Page \d+ ---\n*/g` — use `\n*` to capture surrounding newlines; strip them from display text
+- `splitByPageMarkers()` and `getEntitiesForBlock()` in `+page.svelte` handle per-block entity highlighting for PDF page markers
+- Content viewer uses `<div class="viewer-content">` with `white-space: pre-wrap` — equivalent to `<pre>` but allows block-level child elements for page markers
+- Rust `Vec<u8>` serde-serializes to a JSON number array; frontend type is `number[]`, and can be sent back to Tauri commands directly without base64
+- Theme store: import `theme` store and `initTheme()` from `$lib/stores/theme`; call `initTheme()` in root `+layout.svelte` `onMount`
+- Design tokens: import `$lib/styles/tokens.css` in root `+layout.svelte`; use CSS custom properties like `var(--bg-primary)` everywhere
+- `+layout.svelte` uses Svelte 5 `$props()` with `children` snippet and `{@render children()}`
+- Inline theme script in `app.html` prevents flash of unstyled content — reads `localStorage('aether-theme')` before Svelte hydrates
+- PixelIcon component: `<PixelIcon name="folder" size={24} />` — import `IconName` type from `$lib/components/PixelIcon.svelte` for type-safe icon names
+- Components directory: `src/lib/components/` — all shared UI components live here
+- Sidebar component: `<Sidebar activeView={activeView} onnavigate={(view) => ...} />` — exports `ActiveView` type
+- Svelte 5 event pattern: use `onnavigate` callback prop instead of `createEventDispatcher`; parent passes function directly
+- All styles now use CSS custom properties from tokens.css — no hardcoded colors in +page.svelte
+- Border-radius 0px throughout for pixel art sharpness; borders use `2px solid` for pixel feel
+- Cannot nest `<button>` inside `<button>` — Svelte 5 enforces valid HTML nesting; use `<div>` with onclick + `<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->` for clickable card wrappers
+- FileCard exports `VaultItem` interface — import from `$lib/components/FileCard.svelte`; file type icon mapping: txt→file, pdf→file-alt, csv→table, json→code, md→article
+- Right sidebar conditionally rendered with `{#if activeView === 'browse'}` — hidden during settings view
+- Settings view clears selected file: `selectedItemId = null; selectedItem = null` on navigate to settings
+- FileBrowser component: `<FileBrowser {items} {processing} {errorMessage} {dragOver} bind:pasteText ... />` — accepts callback props for events, renders empty state or file grid
+- `VaultItem` interface is exported from `FileCard.svelte` — import it from `$lib/components/FileCard.svelte` in all components that need it
+- `$bindable()` in Svelte 5: use for two-way binding on component props (e.g., `pasteText = $bindable('')`)
+- SearchBar: `<SearchBar bind:value={searchQuery} />` — uses `$bindable()` for two-way binding, positioned absolute at bottom of center area
+- Center `<main>` has `position: relative` — required for absolute positioning of SearchBar and future FileViewer overlay
+- `$derived()` for computed filtering: `let filteredItems = $derived(...)` — Svelte 5 reactive computed values
+- `color-mix(in srgb, var(--bg-surface) 80%, transparent)` for semi-transparent backgrounds with CSS custom properties (no hardcoded rgba)
+- Center-area overlays: `position: absolute; inset: 0` on the overlay + parent `<main>` has `position: relative` — used by FileViewer and ConfirmDialog
+- FileViewer exports `ItemDetail` interface — import from `$lib/components/FileViewer.svelte` for item detail types
+- EntityPanel component: `<EntityPanel {activeView} {selectedItem} {items} />` — self-contained right sidebar with context-dependent content
+- EntityPanel exports `groupEntitiesByType()`, `EntityGroup`, `EntityGroupItem` — reusable entity grouping logic moved from +page.svelte
+- Svelte 5 `$derived.by(() => ...)` for complex derived values that need multi-line computation (vs `$derived(expr)` for simple expressions)
+- `<script lang="ts" module>` for exported types/functions that need to be importable from `.svelte` files — separate from instance `<script lang="ts">`
+- Escape key dismissal: use `<svelte:window onkeydown={handler} />` for global keyboard shortcuts in overlay components
+- SettingsScreen component: `<SettingsScreen />` — self-contained, reads/writes the theme store directly; no props needed
+- Segmented control pattern: flex container with 2px solid border, child buttons separated by `border-right`, active option gets `--accent-orange` background + white text
+- ConfirmDialog component: `<ConfirmDialog message="..." confirmLabel="Delete" cancelLabel="Cancel" onconfirm={...} oncancel={...} />` — constrained to center area with `position: absolute; inset: 0`
+- ConfirmDialog uses `{@html message}` to support inline HTML (e.g., `<strong>`) in the message prop
+- FileBrowser toolbar: when items exist, a toolbar header renders with Select Files, Paste Text toggle, and Export All buttons; pass `onexportall` and `exportingAll` props from +page.svelte
+- Expandable paste panel: `showPastePanel` local state in FileBrowser toggles a collapsible textarea+button area below the toolbar — avoids cluttering the grid while keeping paste accessible
+- Drag-over on file grid: `class:file-browser-dragover={dragOver}` adds pulsing orange border to `.file-browser` div (reuses `pulse-border` keyframes from drop zone)
+- Toast pixel art styling: `border: 2px solid var(--border-accent)`, `text-transform: uppercase`, `letter-spacing: 0.05em` for pixel art feel
+---
+
+## 2026-03-01 - US-001
+- Implemented design tokens, theme store, and font setup
+- Files created: `src/lib/stores/theme.ts`, `src/lib/styles/tokens.css`, `src/routes/+layout.svelte`
+- Files modified: `src/app.html`
+- **Learnings for future iterations:**
+  - Svelte 5 layout components use `let { children } = $props()` and `{@render children()}` pattern
+  - The inline script in app.html must use vanilla JS (no `const`, no `includes()`) for maximum browser compat — used `var` and `indexOf()`
+  - `initTheme()` subscribes to store changes — calling it once in onMount sets up the entire reactive chain
+  - Google Fonts loaded via `<link>` in app.html head, with `preconnect` hints for performance
+---
+
+## 2026-03-01 - US-002
+- Created PixelIcon.svelte component with 18 inline SVG icons from pixelarticons set
+- Files created: `src/lib/components/PixelIcon.svelte`
+- Icons included: folder, file, file-alt, table, code, article, search, close, settings, download, clipboard, trash, upload, sun, moon, alert, chevron-down, chevron-right
+- **Learnings for future iterations:**
+  - Svelte 5 components use `let { name, size = 24 }: { name: IconName; size?: number } = $props()` for typed props with defaults
+  - `export type` in `<script lang="ts">` makes TypeScript types importable from `.svelte` files
+  - SVG `shape-rendering="crispEdges"` prevents anti-aliasing for pixel-perfect icon rendering
+  - Some pixelarticons names differ from common names: file-alt→file-text, table→grid-3x3, code→brackets-angle, close→cancel, trash→delete; our component uses the common names with the correct SVG paths
+  - All SVGs use `fill="currentColor"` so icons inherit parent text color — no need for color props
+---
+
+## 2026-03-01 - US-003
+- Restructured app shell: replaced 240px file list sidebar with 64px icon nav (Sidebar.svelte)
+- Added `activeView` state ('browse' | 'settings') to control center area content
+- Files created: `src/lib/components/Sidebar.svelte`
+- Files modified: `src/routes/+page.svelte` (layout restructure, all styles migrated to CSS custom properties)
+- **Learnings for future iterations:**
+  - Svelte 5 callback props pattern: `onnavigate: (view: ActiveView) => void` — no need for `createEventDispatcher`
+  - `export type ActiveView` in `<script lang="ts">` of Sidebar.svelte makes it importable with `import type { ActiveView } from '...'`
+  - Old `@media (prefers-color-scheme: dark)` overrides fully replaced by CSS custom properties from tokens.css — much cleaner
+  - The left sidebar file list was removed; existing file viewer and entity panel continue working in 'browse' mode
+  - Settings view navigates away from selected file by clearing `selectedItemId` and `selectedItem`
+  - The 240px right sidebar stays for entity details; the 64px left sidebar is nav-only
+---
+
+## 2026-03-01 - US-004
+- Created FileCard.svelte component for displaying vault files as pixel art styled cards
+- Files created: `src/lib/components/FileCard.svelte`
+- **Learnings for future iterations:**
+  - Cannot nest `<button>` inside `<button>` in Svelte 5 — svelte-check enforces valid HTML nesting; use `<div>` with onclick + a11y ignore comment for card wrapper
+  - FileCard exports `VaultItem` interface — can be imported from `$lib/components/FileCard.svelte` by other components (FileBrowser, +page.svelte)
+  - Svelte 5 callback props: `onselect: (id: number) => void` and `ondelete: (item: VaultItem) => void` — no need for createEventDispatcher
+  - `e.stopPropagation()` on delete button click prevents triggering the card's select handler
+  - File type to icon mapping: txt→file, pdf→file-alt, csv→table, json→code, md→article
+---
+
+## 2026-03-01 - US-005
+- Created FileBrowser.svelte component with empty state (drop zone + paste area) and responsive file grid
+- Moved drop zone, paste area, loading spinner, and Select Files button HTML/CSS from +page.svelte into FileBrowser.svelte
+- FileBrowser renders FileCard grid when items exist, or centered drop zone when empty
+- +page.svelte now imports FileBrowser and passes items/processing/errorMessage/dragOver + callback props
+- Removed duplicate VaultItem interface from +page.svelte — now imported from FileCard.svelte
+- Cleaned up ~165 lines of CSS from +page.svelte that moved to FileBrowser
+- Files created: `src/lib/components/FileBrowser.svelte`
+- Files modified: `src/routes/+page.svelte`, `tasks/prd.json`
+- **Learnings for future iterations:**
+  - Svelte 5 `$bindable()` allows two-way binding on component props — use `pasteText = $bindable('')` in the child, `bind:pasteText` in the parent
+  - When extracting markup into child components, keep handler functions in the parent (+page.svelte) — child dispatches via callback props
+  - CSS grid `repeat(auto-fill, minmax(220px, 1fr))` gives a responsive card layout without media queries
+  - Drop zone pulse animation uses CSS `@keyframes` alternating between `--accent-orange` and `--accent-yellow` border colors
+  - The `VaultItem` interface should be imported from `FileCard.svelte` (the source of truth) rather than redefined in each file
+---
+
+## 2026-03-01 - US-006
+- Created SearchBar.svelte floating component with search icon, text input, and clear button
+- Added `searchQuery` state and `filteredItems` derived value to +page.svelte
+- SearchBar positioned absolute at bottom of center area with frosted glass effect (backdrop-filter blur + semi-transparent background)
+- Search filters file grid in real-time by file name (case-insensitive)
+- SearchBar only visible when vault has files (not shown in empty state)
+- Added `position: relative` to `.content-viewer` for absolute positioning of SearchBar
+- Files created: `src/lib/components/SearchBar.svelte`
+- Files modified: `src/routes/+page.svelte`, `tasks/prd.json`
+- **Learnings for future iterations:**
+  - Svelte 5 `$derived()` is the replacement for reactive declarations — `let filteredItems = $derived(expr)` recomputes whenever dependencies change
+  - `color-mix(in srgb, var(--bg-surface) 80%, transparent)` achieves semi-transparency with CSS custom properties without needing hardcoded rgba values
+  - `position: relative` on the center `<main>` is essential for both SearchBar and future FileViewer overlay — set it once, use for all absolute children
+  - SearchBar uses `$bindable()` for the value prop — parent binds with `bind:value={searchQuery}`
+---
+
+## 2026-03-01 - US-007
+- Created FileViewer.svelte overlay component constrained to center area (position: absolute, not fixed)
+- Moved content rendering logic (splitByPageMarkers, buildHighlightedSegments, getEntitiesForBlock) from +page.svelte into FileViewer
+- Moved all viewer-related CSS (toolbar, toggle, entity highlighting, entity legend, warning banner, page markers) into FileViewer
+- FileViewer exports ItemDetail interface — imported by +page.svelte
+- Overlay dismisses on Escape key (svelte:window keydown) and backdrop click
+- FileViewer emits callback props: onclose, oncopy, onexport, onexportpdf, ontoggleviewmode
+- Replaced inline viewer markup in +page.svelte with <FileViewer> component
+- Removed ~160 lines of CSS and ~60 lines of helper functions from +page.svelte
+- Files created: `src/lib/components/FileViewer.svelte`
+- Files modified: `src/routes/+page.svelte`
+- **Learnings for future iterations:**
+  - `position: absolute; inset: 0` on the overlay + `position: relative` on the parent `<main>` constrains the overlay to the center area — this is the pattern for all center-area overlays (FileViewer, ConfirmDialog)
+  - FileViewer exports `ItemDetail` interface — use `import type { ItemDetail } from '$lib/components/FileViewer.svelte'` in any component that needs item details
+  - Entity type colors (entity-email, entity-person, etc.) are shared across components — they use the same CSS class names with hardcoded rgba backgrounds + CSS variable border colors
+  - Viewer content rendering must keep Svelte template blocks on one line inside `<div class="viewer-content">` to avoid injecting whitespace (pre-wrap)
+  - `svelte:window onkeydown` is the cleanest way to add global keyboard shortcuts in a Svelte component
+  - `role="presentation"` on the backdrop div avoids a11y warnings while still allowing click handlers
+---
+
+## 2026-03-01 - US-008
+- Created EntityPanel.svelte component with context-dependent right panel content
+- Three modes: entity details (file selected), vault summary (browsing, no file), hidden (settings)
+- Vault summary shows total file count, total entity count, and file type breakdown
+- Moved `groupEntitiesByType()`, `EntityGroupItem`, `EntityGroup`, and `ENTITY_TYPE_LABELS` from +page.svelte into EntityPanel
+- Entity swatch colors now explicitly styled with CSS classes referencing `--entity-*` custom properties
+- Removed ~85 lines of entity group CSS and ~45 lines of sidebar CSS from +page.svelte
+- Files created: `src/lib/components/EntityPanel.svelte`
+- Files modified: `src/routes/+page.svelte`, `tasks/prd.json`
+- **Learnings for future iterations:**
+  - Svelte 5 `<script lang="ts" module>` block is needed for exporting types and functions that other components import — separate from the instance `<script lang="ts">` block
+  - `$derived.by(() => { ... })` is the Svelte 5 pattern for multi-line derived computations (vs `$derived(expr)` for simple one-liners)
+  - Entity type swatch colors need explicit `.entity-email`, `.entity-person` etc. CSS classes with `background-color` and `border-color` — the `entity-{type}` dynamic class pattern requires these to be defined in the component's scoped styles
+  - The `groupEntitiesByType()` function is now a shared export from EntityPanel — future components can import it from `$lib/components/EntityPanel.svelte`
+---
+
+## 2026-03-01 - US-009
+- Created SettingsScreen.svelte with dark/light/system theme toggle using segmented control
+- Replaced settings placeholder in +page.svelte with SettingsScreen component
+- Removed unused settings placeholder CSS from +page.svelte
+- Theme toggle uses three-button segmented control with PixelIcon (moon/sun/settings) and labels
+- Active option highlighted with --accent-orange background, pixel art borders (0px border-radius, 2px solid)
+- Reads and writes the theme Svelte store from $lib/stores/theme — initTheme() handles localStorage persistence and data-theme attribute updates
+- Files created: `src/lib/components/SettingsScreen.svelte`
+- Files modified: `src/routes/+page.svelte`, `tasks/prd.json`
+- **Learnings for future iterations:**
+  - `theme.subscribe()` in Svelte 5 component instance script gives the current store value — use it to sync a local `$state()` variable for reactive template bindings
+  - SettingsScreen is purely a UI component — all theme switching logic lives in the theme store (`$lib/stores/theme`), keeping the component simple
+  - The segmented control pattern: flex container with `border: 2px solid var(--border)`, child buttons with `border-right` separators, active button gets `background-color: var(--accent-orange)` and white text
+---
+
+## 2026-03-01 - US-010
+- Created ConfirmDialog.svelte component with pixel art styling, constrained to center area
+- Replaced inline confirm-overlay/confirm-dialog HTML and CSS in +page.svelte with ConfirmDialog component
+- Dialog uses `position: absolute; inset: 0` inside `<main>` (which has `position: relative`) — same pattern as FileViewer
+- Overlay uses `color-mix(in srgb, var(--bg-primary) 60%, transparent)` for semi-transparent backdrop
+- Escape key dismissal via `<svelte:window onkeydown>` handler
+- Removed ~65 lines of confirm dialog CSS from +page.svelte
+- Files created: `src/lib/components/ConfirmDialog.svelte`
+- Files modified: `src/routes/+page.svelte`, `tasks/prd.json`
+- **Learnings for future iterations:**
+  - ConfirmDialog uses `{@html message}` to support inline HTML like `<strong>` in the message — be careful with user-supplied content (XSS), but fine for developer-controlled strings
+  - `role="dialog" aria-modal="true" tabindex="-1"` on the dialog div satisfies svelte-check a11y rules
+  - The center-area overlay pattern (position: absolute + parent position: relative) is now used by FileViewer and ConfirmDialog — consistent z-index layering: FileViewer at z-index 40, ConfirmDialog at z-index 50
+---
+
+## 2026-03-01 - US-011
+- Implemented drag-drop, paste ingestion, and toast in new layout
+- Added toolbar header to FileBrowser with Select Files, Paste Text toggle, and Export All buttons
+- Added expandable paste panel below toolbar for paste-to-redact when files already exist
+- Added drag-over pulsing orange border indicator to file grid view (not just empty state)
+- Enhanced toast notifications with pixel art styling (2px accent border, uppercase, letter-spacing)
+- Processing spinner already uses `steps(8)` timing for pixel art feel (from US-005)
+- All existing functions (handleFileDrop, handlePasteSubmit, selectFiles, exportAll, copyMaskedText) verified functional
+- Files modified: `src/lib/components/FileBrowser.svelte`, `src/routes/+page.svelte`, `tasks/prd.json`
+- **Learnings for future iterations:**
+  - When adding new callback props to a child component (e.g., `onexportall`), update both the type definition and the parent component's usage
+  - `$state(false)` for local toggle state (showPastePanel) keeps UI interaction state within the component
+  - Reusing `@keyframes` across different CSS class contexts works within Svelte scoped styles as long as both classes are in the same component
+  - `padding-bottom: 60px` on the file grid prevents cards from being hidden behind the SearchBar overlay
+---

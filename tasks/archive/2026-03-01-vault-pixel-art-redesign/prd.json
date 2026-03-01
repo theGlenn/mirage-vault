@@ -1,0 +1,243 @@
+{
+  "project": "Aether Vault",
+  "branchName": "ralph/vault-pixel-art-redesign",
+  "description": "Vault Pixel Art Redesign (Iteration 1) - Overhaul the Vault app UI with a Mistral-inspired pixel art aesthetic (warm yellow/orange/red palette, pixelarticons, sharp corners), restructure the layout (nav sidebar, file browser grid, overlay file viewer, context-dependent right panel), and add a dark/light theme system.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Design tokens, theme store, and font setup",
+      "description": "As a developer, I need CSS custom properties for the pixel art theme and a Svelte store for theme management so all subsequent components share a consistent visual language.",
+      "acceptanceCriteria": [
+        "Create src/lib/stores/theme.ts exporting a writable Svelte store with values 'dark' | 'light' | 'system' and a function initTheme() that reads from localStorage, sets data-theme attribute on document.documentElement, and subscribes to changes",
+        "Create src/lib/styles/tokens.css with CSS custom properties on [data-theme='dark'] and [data-theme='light'] selectors",
+        "Dark theme tokens: --bg-primary: #1a1a1a, --bg-secondary: #222222, --bg-surface: #2a2a2a, --bg-elevated: #333333, --accent-yellow: #F5C542, --accent-orange: #E8751A, --accent-red: #D94E1F, --accent-deep: #C0392B, --text-primary: #F6F6F6, --text-secondary: #999999, --text-muted: #666666, --border: #333333, --border-accent: #E8751A",
+        "Light theme tokens: --bg-primary: #FAF7F2, --bg-secondary: #F0EDE6, --bg-surface: #FFFFFF, --bg-elevated: #F5F2ED, --accent-yellow: #D4952A, --accent-orange: #C5611A, --accent-red: #B8431A, --accent-deep: #A22E1F, --text-primary: #1A1A1A, --text-secondary: #666666, --text-muted: #999999, --border: #E0DDD6, --border-accent: #C5611A",
+        "Entity type colors preserved as tokens: --entity-email (blue), --entity-person (green), --entity-org (orange), --entity-amt (red), --entity-phone (purple), --entity-api-key (gray)",
+        "Add Google Font 'Press Start 2P' link to src/app.html <head>",
+        "Add inline <script> in app.html that reads localStorage theme preference and sets data-theme attribute before first paint to prevent flash",
+        "Import tokens.css in the root layout or app.html so it applies globally",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "The theme store should default to 'system' which checks window.matchMedia('(prefers-color-scheme: dark)'). The inline script in app.html runs before Svelte hydrates, so it must be vanilla JS that reads localStorage('aether-theme') and sets data-theme on <html>."
+    },
+    {
+      "id": "US-002",
+      "title": "PixelIcon Svelte component with all needed SVG icons",
+      "description": "As a developer, I need a reusable Svelte component that renders pixel art icons from the pixelarticons set so all UI elements have consistent retro icons.",
+      "acceptanceCriteria": [
+        "Create src/lib/components/PixelIcon.svelte that accepts a 'name' prop (string) and optional 'size' prop (number, default 24)",
+        "Component renders an inline SVG based on the 'name' prop using a switch/if-else block",
+        "Include these icons as inline SVG paths: folder, file, file-alt, table, code, article, search, close, settings, download, clipboard, trash, upload, sun, moon, alert, chevron-down, chevron-right",
+        "SVG icons sourced from the free pixelarticons set (https://github.com/halfmage/pixelarticons) — 24x24 viewBox",
+        "All SVGs use fill='currentColor' or stroke='currentColor' so they inherit the parent text color",
+        "SVGs have shape-rendering='crispEdges' for pixel-perfect rendering without anti-aliasing",
+        "Component exports proper TypeScript types for the name prop (union of valid icon names)",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Download SVG source from https://github.com/halfmage/pixelarticons/tree/master/svg — each icon is a 24x24 SVG. Copy just the <path> data. The component should be a simple {#if name === 'folder'}...{:else if name === 'file'}...{/if} pattern wrapping <svg> elements."
+    },
+    {
+      "id": "US-003",
+      "title": "App shell restructure with Sidebar navigation",
+      "description": "As a user, I want a navigation sidebar on the left with Browse and Settings sections so I can switch between the file browser and settings views.",
+      "acceptanceCriteria": [
+        "Create src/lib/components/Sidebar.svelte with two nav items: Browse (folder icon) and Settings (settings icon)",
+        "Sidebar accepts an 'activeView' prop ('browse' | 'settings') and dispatches a 'navigate' event when a nav item is clicked",
+        "Active nav item is highlighted with --accent-orange background/border",
+        "Sidebar has a compact width of 64px with vertically stacked icon + small label layout",
+        "Sidebar top area shows app branding text 'VAULT' in Press Start 2P font",
+        "Sidebar uses --bg-secondary background with --border right border",
+        "Update +page.svelte: add activeView state variable (default 'browse'), import and render Sidebar in the left panel, remove the old file list from the left sidebar",
+        "Center area conditionally renders based on activeView: 'browse' shows the existing content viewer / drop zone, 'settings' shows a placeholder div with text 'Settings'",
+        "The old left sidebar file list content is temporarily removed (will be moved to center area in a later story)",
+        "All existing functionality (file viewer, entity panel) continues to work when activeView is 'browse'",
+        "All styles use CSS custom properties from tokens.css (no hardcoded colors)",
+        "Border-radius on all elements is 0px or 2px max for pixel art sharpness",
+        "Typecheck passes",
+        "Verify in browser using pnpm tauri dev"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "This is the biggest structural change. The left sidebar goes from 240px file list to a 64px icon nav. The file list moves to the center area in the next story. Keep the existing center and right panel logic intact — just wrap them in the activeView conditional. Use the 'navigate' CustomEvent dispatch pattern in Svelte 5."
+    },
+    {
+      "id": "US-004",
+      "title": "FileCard component",
+      "description": "As a developer, I need a FileCard component that displays a vault file as a pixel art styled card for use in the file browser grid.",
+      "acceptanceCriteria": [
+        "Create src/lib/components/FileCard.svelte that accepts a VaultItem prop (id, name, file_type, entity_count, created_at, warning)",
+        "Card displays: PixelIcon for file type (file for txt, file-alt for pdf, table for csv, code for json, article for md), file name (truncated with ellipsis if > ~30 chars), entity count with label, file type badge, formatted creation date",
+        "Card has --bg-surface background, --border border, 0px border-radius",
+        "Card hover state: --bg-elevated background, --border-accent left or top border accent (2-4px solid orange)",
+        "Card shows a delete button (PixelIcon trash) in the top-right corner on hover, with --accent-red color",
+        "Card emits 'select' event (with item id) on click and 'delete' event (with item) on delete button click",
+        "Warning icon (PixelIcon alert) shown next to file name if warning is non-null",
+        "Entity count badge uses --accent-yellow color",
+        "All text uses --text-primary for name, --text-secondary for metadata",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "The VaultItem interface is defined in +page.svelte — either import it or redefine it in the component. Use the same formatDate helper pattern from the existing code. The delete button should call e.stopPropagation() to prevent triggering the card select event."
+    },
+    {
+      "id": "US-005",
+      "title": "FileBrowser grid with empty state and drop zone",
+      "description": "As a user, I want to see all my vault files displayed as a grid of cards in the center area, with a drop zone when the vault is empty.",
+      "acceptanceCriteria": [
+        "Create src/lib/components/FileBrowser.svelte that accepts items (VaultItem[]), processing (boolean), errorMessage (string), and dragOver (boolean) props",
+        "When items is empty: show a drop zone with PixelIcon upload, instructional text 'Drop .txt .md .csv .json or .pdf files here', a Select Files button, and a paste text area with a text input and 'Redact & Save' button",
+        "When items has entries: show a responsive CSS grid of FileCard components (auto-fill, min 220px, 1fr)",
+        "Grid has padding and gap between cards",
+        "FileBrowser emits events: 'selectFile' (id), 'deleteFile' (item), 'selectFiles' (no payload), 'pasteSubmit' (text)",
+        "Drop zone active state: pulsing --accent-orange dashed border when dragOver is true",
+        "Processing state: show a pixel art spinner (CSS animation with stepped keyframes for pixel feel) and 'Processing files...' text",
+        "Error message displayed below drop zone in --accent-red color",
+        "Empty state uses --bg-surface background, --border dashed border",
+        "Update +page.svelte: import FileBrowser, render it in center area when activeView is 'browse' and no file is selected, pass items/processing/errorMessage/dragOver props, wire up event handlers to existing functions",
+        "Typecheck passes",
+        "Verify in browser using pnpm tauri dev"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "The existing drop zone, paste area, and select files button logic is in +page.svelte. Move the HTML/CSS into FileBrowser.svelte but keep the handler functions in +page.svelte — FileBrowser just dispatches events. The grid uses CSS grid with auto-fill for responsive columns."
+    },
+    {
+      "id": "US-006",
+      "title": "SearchBar floating component",
+      "description": "As a user, I want a search bar floating at the bottom of the center area so I can quickly filter files by name.",
+      "acceptanceCriteria": [
+        "Create src/lib/components/SearchBar.svelte that accepts a 'value' bindable prop (string)",
+        "Component renders a fixed-to-bottom bar inside the center area using position: absolute (parent has position: relative)",
+        "Bar contains a PixelIcon search on the left, a text input in the center, and a clear button (PixelIcon close) on the right when value is non-empty",
+        "Input has placeholder text 'Search files...'",
+        "Bar has a backdrop-filter: blur(8px) with semi-transparent --bg-surface background for a frosted glass effect",
+        "Bar has --border top border and 0px border-radius",
+        "SearchBar is only visible when there are files in the vault (not shown in empty state)",
+        "Update +page.svelte: add a searchQuery state variable, import SearchBar, render it inside the center area below FileBrowser",
+        "Filter the items array passed to FileBrowser based on searchQuery matching against item.name (case-insensitive)",
+        "Typecheck passes",
+        "Verify in browser using pnpm tauri dev"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "For iteration 1, search by file name only is sufficient. Content search requires loading all file contents which is a performance concern for later. The center area <main> needs position: relative for the absolute positioning to work. The search bar should have z-index above the file grid but below any overlay."
+    },
+    {
+      "id": "US-007",
+      "title": "FileViewer overlay popup constrained to center area",
+      "description": "As a user, I want clicking a file card to open a viewer overlay that stays within the center area so I can view file contents without losing navigation context.",
+      "acceptanceCriteria": [
+        "Create src/lib/components/FileViewer.svelte that accepts selectedItem (ItemDetail) and viewMode ('masked' | 'original') props",
+        "Component renders as an overlay with position: absolute, inset: 0 relative to the center panel (not position: fixed on viewport)",
+        "Overlay has a semi-transparent backdrop (rgba black with --bg-primary base) that covers only the center area",
+        "Popup container is centered within the overlay, takes ~90% width and ~90% height of the center area, has --bg-surface background and --border border",
+        "Popup header shows: file name in Press Start 2P font, and a close button (PixelIcon close) in the top-right corner",
+        "Popup toolbar: masked/original toggle (segmented control with --bg-elevated background, --accent-orange for active segment), Copy button, Export button, Export PDF button (only for PDF items with raw_pdf_bytes)",
+        "Entity color legend shown when in 'original' view mode (same as current implementation)",
+        "Warning banner for PDF extraction issues shown when selectedItem.warning is non-null",
+        "Content area shows masked or original text with entity highlighting (same logic as current implementation: splitByPageMarkers, buildHighlightedSegments, getEntitiesForBlock)",
+        "Clicking backdrop dismisses the popup (emits 'close' event)",
+        "Pressing Escape key dismisses the popup (add keydown event listener)",
+        "FileViewer emits: 'close', 'copy', 'export', 'exportPdf', 'toggleViewMode' events",
+        "Update +page.svelte: show FileViewer overlay inside the center area when selectedItem is non-null, wire up event handlers to existing functions (copyMaskedText, exportFile, exportMaskedPdf), clicking a FileCard sets selectedItemId and loads the item",
+        "Typecheck passes",
+        "Verify in browser using pnpm tauri dev"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "The key constraint is position: absolute (not fixed) so the overlay stays within the center <main> element. The center <main> must have position: relative and overflow: hidden. Move the existing viewer content rendering logic (splitByPageMarkers, buildHighlightedSegments, entity highlighting) into FileViewer.svelte. The helper functions (splitByPageMarkers, buildHighlightedSegments, getEntitiesForBlock) can be imported from a shared utils file or kept in +page.svelte and passed as props/context."
+    },
+    {
+      "id": "US-008",
+      "title": "EntityPanel — context-dependent right panel",
+      "description": "As a user, I want the right panel to show relevant information based on what I'm doing so I always have useful context.",
+      "acceptanceCriteria": [
+        "Create src/lib/components/EntityPanel.svelte that accepts activeView ('browse' | 'settings'), selectedItem (ItemDetail | null), and items (VaultItem[]) props",
+        "When activeView is 'browse' and selectedItem is non-null: show entity details grouped by type (same layout as current right sidebar — entity groups with type header, original value, token, and count)",
+        "When activeView is 'browse' and selectedItem is null: show a vault summary with total file count, total entity count across all files, and file type breakdown (count per extension)",
+        "When activeView is 'settings': show empty state or hide the panel entirely",
+        "Entity groups use the existing entity type colors (--entity-email, --entity-person, etc.) for group header swatches",
+        "Panel header shows 'ENTITIES' (when file selected), 'VAULT' (when browsing), or nothing (settings) in Press Start 2P font",
+        "All styling uses tokens.css custom properties, 0px border-radius, --bg-secondary background",
+        "Update +page.svelte: replace the existing right sidebar <aside> content with EntityPanel component, pass the required props",
+        "The existing groupEntitiesByType() function is moved into EntityPanel or a shared utils module",
+        "Typecheck passes",
+        "Verify in browser using pnpm tauri dev"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "The vault summary stats (total files, total entities, type breakdown) can be computed from the items array. Entity count is already on each VaultItem. The entity detail view reuses the exact same groupEntitiesByType logic and display as the current implementation."
+    },
+    {
+      "id": "US-009",
+      "title": "SettingsScreen with theme toggle",
+      "description": "As a user, I want a settings screen with a dark/light/system theme toggle so I can control the app's appearance.",
+      "acceptanceCriteria": [
+        "Create src/lib/components/SettingsScreen.svelte rendered in the center area when activeView is 'settings'",
+        "Screen has a 'SETTINGS' heading in Press Start 2P font",
+        "Contains a 'Theme' section with a three-option segmented control: Dark, Light, System",
+        "Each option shows a PixelIcon: moon for Dark, sun for Light, settings for System",
+        "Active option highlighted with --accent-orange background",
+        "Selecting an option updates the theme store from src/lib/stores/theme.ts",
+        "Theme change immediately applies (data-theme attribute updates, all CSS custom properties switch)",
+        "The selected theme persists in localStorage under the key 'aether-theme'",
+        "On page load, the persisted preference is applied (handled by the inline script from US-001 and the store's initTheme())",
+        "Segmented control has --bg-elevated background, --border borders, 0-2px border-radius",
+        "Update +page.svelte: import SettingsScreen, render in center area when activeView is 'settings'",
+        "Typecheck passes",
+        "Verify in browser using pnpm tauri dev"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "The theme store from US-001 handles the actual theme switching logic. SettingsScreen just reads and writes the store value. The segmented control is three buttons in a flex row."
+    },
+    {
+      "id": "US-010",
+      "title": "ConfirmDialog with pixel art styling",
+      "description": "As a user, I want the delete confirmation dialog to match the pixel art style and stay within the center area.",
+      "acceptanceCriteria": [
+        "Create src/lib/components/ConfirmDialog.svelte that accepts message (string), confirmLabel (string), and cancelLabel (string) props",
+        "Component renders as an overlay constrained to the center area (position: absolute, same pattern as FileViewer)",
+        "Dialog box centered in the overlay with --bg-surface background, --border border, 0px border-radius",
+        "Cancel button: --bg-elevated background, --text-primary color",
+        "Confirm/Delete button: --accent-red background, white text",
+        "Both buttons have 0px border-radius and pixel-style borders (2px solid)",
+        "Clicking the backdrop dismisses the dialog (emits 'cancel' event)",
+        "Component emits 'confirm' and 'cancel' events",
+        "Update +page.svelte: replace the existing confirm-overlay/confirm-dialog HTML with the ConfirmDialog component",
+        "Delete functionality works: clicking trash on FileCard sets confirmDeleteItem, ConfirmDialog shows, confirm calls deleteItem(), cancel clears confirmDeleteItem",
+        "Typecheck passes",
+        "Verify in browser using pnpm tauri dev"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "The existing delete logic in +page.svelte stays — just the dialog HTML/CSS moves into ConfirmDialog.svelte. The overlay constraint pattern is the same as FileViewer: position absolute inside the center <main> which has position relative."
+    },
+    {
+      "id": "US-011",
+      "title": "Drag-drop, paste ingestion, and toast in new layout",
+      "description": "As a user, I want drag-drop and paste-to-redact to work seamlessly in the new layout with pixel art visual feedback.",
+      "acceptanceCriteria": [
+        "Drag-drop onto the center area triggers file ingestion (existing onDragDropEvent logic from Tauri)",
+        "Drag-over state adds a pulsing --accent-orange dashed border to the center area (visible over both the file grid and empty state)",
+        "Select Files button available in the FileBrowser empty state and accessible via the Sidebar or a toolbar action",
+        "Paste-to-redact textarea and Redact & Save button work in the new layout (within FileBrowser empty state or as an expandable panel)",
+        "Processing spinner uses a CSS animation with steps() timing function for a pixel art feel (not smooth rotation)",
+        "Toast notifications styled with pixel art theme: --bg-elevated background, --text-primary color, --border border, 0px border-radius, positioned at bottom center",
+        "Export All button accessible from the FileBrowser header or a toolbar when items exist",
+        "All existing functions (handleFileDrop, handlePasteSubmit, selectFiles, exportAll, copyMaskedText) remain functional",
+        "Error messages use --accent-red color",
+        "Typecheck passes",
+        "Verify in browser using pnpm tauri dev"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": "Most of the logic is already in +page.svelte — this story is about ensuring it works with the new component structure and applying pixel art styles. The Tauri drag-drop event listener stays in +page.svelte's onMount since it needs the webview reference. The dragOver state is passed down to FileBrowser for visual feedback."
+    }
+  ]
+}
