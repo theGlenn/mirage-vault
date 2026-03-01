@@ -29,7 +29,19 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, Box<dyn std::error::Error>
             span_start INTEGER NOT NULL,
             span_end INTEGER NOT NULL,
             FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
-        );",
+        );
+        CREATE TABLE IF NOT EXISTS hash_mappings (
+            id INTEGER PRIMARY KEY,
+            item_id INTEGER NOT NULL,
+            hash TEXT NOT NULL,
+            original TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+            UNIQUE(item_id, hash)
+        );
+        CREATE INDEX IF NOT EXISTS idx_hash_mappings_item ON hash_mappings(item_id);
+        CREATE INDEX IF NOT EXISTS idx_hash_mappings_hash ON hash_mappings(hash);",
     )?;
 
     // Enable foreign key enforcement

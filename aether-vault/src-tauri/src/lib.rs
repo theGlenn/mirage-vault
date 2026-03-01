@@ -35,6 +35,8 @@ pub fn run() {
             commands::export_masked_pdf,
             commands::export_file,
             commands::export_zip,
+            commands::save_hash_mappings,
+            commands::get_hash_mappings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

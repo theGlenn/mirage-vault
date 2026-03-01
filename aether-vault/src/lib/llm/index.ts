@@ -1,7 +1,7 @@
 /**
  * LLM-Assisted Detection Module
  * 
- * Provides LLM-enhanced entity detection using local Ollama.
+ * Provides LLM-enhanced entity detection and hash-based masking using local Ollama.
  * 
  * Usage:
  * ```typescript
@@ -15,6 +15,13 @@
  * console.log(result.entities); // Final entity list
  * console.log(result.llmUsed);  // Whether LLM was actually used
  * console.log(result.timing);   // Performance metrics
+ * 
+ * // Hash-based masking (Ollama does the masking)
+ * import { maskWithLlm, rehydrateWithHashes } from '$lib/llm/hashMasking';
+ * const masked = await maskWithLlm(text);
+ * console.log(masked.maskedText);  // Text with [[TYPE:HASH]]
+ * console.log(masked.mappings);    // Map of hash -> original
+ * const rehydrated = rehydrateWithHashes(masked.maskedText, masked.mappings);
  * ```
  */
 
@@ -32,6 +39,14 @@ export {
   OllamaClient,
 } from './ollama';
 
+export {
+  // Hash-based masking (new approach)
+  maskWithLlm,
+  rehydrateWithHashes,
+  validateHashMapping,
+  testModelFormat,
+} from './hashMasking';
+
 export type {
   // Types
   DetectedEntity,
@@ -42,3 +57,9 @@ export type {
   DetectionOptions,
   HybridDetectionResult,
 } from './detector';
+
+export type {
+  // Hash masking types
+  HashMaskingResult,
+  HashMapping,
+} from './hashMasking';

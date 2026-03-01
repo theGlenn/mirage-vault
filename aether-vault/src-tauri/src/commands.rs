@@ -441,3 +441,76 @@ pub async fn export_zip(
 
     Ok(())
 }
+
+// --- Hash Mapping commands for LLM-based masking ---
+
+#[derive(Deserialize)]
+pub struct HashMappingInput {
+    pub hash: String,
+    pub original: String,
+    pub entity_type: String,
+}
+
+#[derive(Serialize)]
+pub struct HashMappingOutput {
+    pub id: i64,
+    pub hash: String,
+    pub original: String,
+    pub entity_type: String,
+}
+
+#[tauri::command]
+pub fn save_hash_mappings(
+    db: State<'_, DbState>,
+    item_id: i64,
+    mappings: Vec<HashMappingInput>,
+) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    
+    for mapping in &mappings {
+        conn.execute(
+            "INSERT OR REPLACE INTO hash_mappings (item_id, hash, original, entity_type) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                item_id,
+                mapping.hash,
+                mapping.original,
+                mapping.entity_type,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_hash_mappings(
+    db: State<'_, DbState>,
+    item_id: i64,
+) -> Result<Vec<HashMappingOutput>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, hash, original, entity_type FROM hash_mappings WHERE item_id = ?1 ORDER BY id",
+        )
+        .map_err(|e| e.to_string())?;
+    
+    let mappings = stmt
+        .query_map(rusqlite::params![item_id], |row| {
+            Ok(HashMappingOutput {
+                id: row.get(0)?,
+                hash: row.get(1)?,
+                original: row.get(2)?,
+                entity_type: row.get(3)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    
+    let mut result = Vec::new();
+    for mapping in mappings {
+        result.push(mapping.map_err(|e| e.to_string())?);
+    }
+    
+    Ok(result)
+}
