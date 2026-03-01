@@ -35,5 +35,19 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, Box<dyn std::error::Error>
     // Enable foreign key enforcement
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
 
+    // Idempotent migrations: add columns for PDF support
+    // ALTER TABLE ADD COLUMN errors if the column already exists, so we catch and ignore that.
+    let migrations = [
+        "ALTER TABLE items ADD COLUMN warning TEXT",
+        "ALTER TABLE items ADD COLUMN raw_pdf_bytes BLOB",
+    ];
+    for sql in &migrations {
+        match conn.execute_batch(sql) {
+            Ok(_) => {}
+            Err(e) if e.to_string().contains("duplicate column name") => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+
     Ok(conn)
 }

@@ -25,6 +25,10 @@ pub fn run() {
             commands::list_items,
             commands::get_item,
             commands::delete_item,
+            commands::read_file_text,
+            commands::read_file_bytes,
+            commands::extract_pdf_text,
+            commands::export_masked_pdf,
             commands::export_file,
             commands::export_zip,
         ])

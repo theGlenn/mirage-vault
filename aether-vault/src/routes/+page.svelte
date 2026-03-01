@@ -1,9 +1,11 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
+  import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+  import { onMount } from 'svelte';
   import { detect } from '$lib/detectors';
   import { mask } from '$lib/masker';
 
-  const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.csv', '.json'];
+  const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.csv', '.json', '.pdf'];
 
   interface VaultItem {
     id: number;
@@ -11,6 +13,7 @@
     file_type: string;
     entity_count: number;
     created_at: string;
+    warning: string | null;
   }
 
   interface EntityDetail {
@@ -29,6 +32,8 @@
     raw_content: string;
     masked_content: string;
     created_at: string;
+    warning: string | null;
+    raw_pdf_bytes: number[] | null;
     entities: EntityDetail[];
   }
 
@@ -105,6 +110,41 @@
     return segments;
   }
 
+  interface ContentBlock {
+    type: 'content' | 'marker';
+    text: string;
+    start: number;
+    end: number;
+  }
+
+  function splitByPageMarkers(text: string): ContentBlock[] {
+    const blocks: ContentBlock[] = [];
+    let lastIndex = 0;
+    const regex = /\n*--- Page \d+ ---\n*/g;
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        blocks.push({ type: 'content', text: text.substring(lastIndex, match.index), start: lastIndex, end: match.index });
+      }
+      const markerText = match[0].replace(/^\n+|\n+$/g, '');
+      blocks.push({ type: 'marker', text: markerText, start: match.index, end: match.index + match[0].length });
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < text.length) {
+      blocks.push({ type: 'content', text: text.substring(lastIndex), start: lastIndex, end: text.length });
+    }
+    if (blocks.length === 0) {
+      blocks.push({ type: 'content', text, start: 0, end: text.length });
+    }
+    return blocks;
+  }
+
+  function getEntitiesForBlock(entities: EntityDetail[], block: ContentBlock): EntityDetail[] {
+    return entities
+      .filter(e => e.span_start >= block.start && e.span_end <= block.end)
+      .map(e => ({ ...e, span_start: e.span_start - block.start, span_end: e.span_end - block.start }));
+  }
+
   let items: VaultItem[] = $state([]);
   let selectedItemId: number | null = $state(null);
   let selectedItem: ItemDetail | null = $state(null);
@@ -145,18 +185,15 @@
     items = await invoke<VaultItem[]>('list_items');
   }
 
-  function readFileAsText(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = () => reject(new Error(`Failed to read file: ${file.name}`));
-      reader.readAsText(file);
-    });
+  interface PdfExtractResult {
+    text: string;
+    page_count: number;
+    has_warning: boolean;
   }
 
-  async function ingestFile(file: File) {
-    const ext = getExtension(file.name).replace('.', '');
-    const text = await readFileAsText(file);
+  async function ingestFilePath(path: string, name: string) {
+    const ext = getExtension(name).replace('.', '');
+    const text = await invoke<string>('read_file_text', { path });
     const detections = detect(text);
     const result = mask(text, detections);
 
@@ -169,11 +206,38 @@
     }));
 
     await invoke('save_item', {
-      name: file.name,
+      name,
       fileType: ext,
       rawContent: text,
       maskedContent: result.maskedText,
       entities
+    });
+  }
+
+  async function ingestPdfFilePath(path: string, name: string) {
+    const bytes = await invoke<number[]>('read_file_bytes', { path });
+
+    const pdfResult = await invoke<PdfExtractResult>('extract_pdf_text', { content: bytes });
+
+    const detections = detect(pdfResult.text);
+    const result = mask(pdfResult.text, detections);
+
+    const entities = result.mappings.map((m) => ({
+      entity_type: m.type,
+      original_value: m.original,
+      token: m.token,
+      span_start: m.start,
+      span_end: m.end
+    }));
+
+    await invoke('save_item', {
+      name,
+      fileType: 'pdf',
+      rawContent: pdfResult.text,
+      maskedContent: result.maskedText,
+      entities,
+      warning: pdfResult.has_warning ? 'Some pages in this PDF could not be extracted. Results may be incomplete.' : undefined,
+      rawPdfBytes: bytes
     });
   }
 
@@ -224,11 +288,45 @@
 
   async function exportFile() {
     if (!selectedItem) return;
+    const isPdf = selectedItem.file_type === 'pdf';
     await invoke('export_file', {
-      fileName: selectedItem.name,
+      fileName: isPdf ? selectedItem.name.replace(/\.pdf$/i, '.txt') : selectedItem.name,
       content: selectedItem.masked_content,
-      fileExtension: selectedItem.file_type
+      fileExtension: isPdf ? 'txt' : selectedItem.file_type
     });
+  }
+
+  async function exportMaskedPdf() {
+    if (!selectedItem || selectedItem.file_type !== 'pdf' || !selectedItem.raw_pdf_bytes) return;
+
+    // Build unique replacement pairs from entities
+    const seen = new Set<string>();
+    const replacements: { original: string; token: string }[] = [];
+    for (const e of selectedItem.entities) {
+      const key = `${e.original_value}\0${e.token}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        replacements.push({ original: e.original_value, token: e.token });
+      }
+    }
+
+    try {
+      const result = await invoke<boolean>('export_masked_pdf', {
+        pdfBytes: selectedItem.raw_pdf_bytes,
+        replacements,
+        fileName: selectedItem.name
+      });
+      if (result) {
+        if (toastTimeout) clearTimeout(toastTimeout);
+        toastMessage = 'Masked PDF exported';
+        toastTimeout = setTimeout(() => { toastMessage = ''; }, 2000);
+      }
+    } catch {
+      if (toastTimeout) clearTimeout(toastTimeout);
+      toastMessage = 'PDF export failed — falling back to text export';
+      toastTimeout = setTimeout(() => { toastMessage = ''; }, 2000);
+      await exportFile();
+    }
   }
 
   let confirmDeleteItem: VaultItem | null = $state(null);
@@ -251,9 +349,10 @@
       const zipItems = [];
       for (const item of items) {
         const detail = await invoke<ItemDetail>('get_item', { itemId: item.id });
+        const isPdf = detail.file_type === 'pdf';
         zipItems.push({
-          name: detail.name,
-          fileType: detail.file_type,
+          name: isPdf ? detail.name.replace(/\.pdf$/i, '.txt') : detail.name,
+          fileType: isPdf ? 'txt' : detail.file_type,
           maskedContent: detail.masked_content
         });
       }
@@ -267,44 +366,36 @@
     }
   }
 
-  function handleDragOver(event: DragEvent) {
-    event.preventDefault();
-    dragOver = true;
-  }
-
-  function handleDragLeave() {
-    dragOver = false;
-  }
-
-  async function handleDrop(event: DragEvent) {
-    event.preventDefault();
-    dragOver = false;
+  async function handleFileDrop(paths: string[]) {
     errorMessage = '';
 
-    const droppedFiles = event.dataTransfer?.files;
-    if (!droppedFiles || droppedFiles.length === 0) return;
-
     const invalidFiles: string[] = [];
-    const validFiles: File[] = [];
+    const validPaths: { path: string; name: string }[] = [];
 
-    for (const file of droppedFiles) {
-      const ext = getExtension(file.name);
+    for (const path of paths) {
+      const name = path.replace(/\\/g, '/').split('/').pop() || path;
+      const ext = getExtension(name);
       if (!ACCEPTED_EXTENSIONS.includes(ext)) {
-        invalidFiles.push(file.name);
+        invalidFiles.push(name);
       } else {
-        validFiles.push(file);
+        validPaths.push({ path, name });
       }
     }
 
     if (invalidFiles.length > 0) {
-      errorMessage = `Unsupported file type(s): ${invalidFiles.join(', ')}. Only .txt, .md, .csv, and .json files are accepted.`;
+      errorMessage = `Unsupported file type(s): ${invalidFiles.join(', ')}. Only .txt, .md, .csv, .json, and .pdf files are accepted.`;
       return;
     }
 
     processing = true;
     try {
-      for (const file of validFiles) {
-        await ingestFile(file);
+      for (const { path, name } of validPaths) {
+        const ext = getExtension(name);
+        if (ext === '.pdf') {
+          await ingestPdfFilePath(path, name);
+        } else {
+          await ingestFilePath(path, name);
+        }
       }
       await refreshItems();
     } catch (err) {
@@ -314,8 +405,28 @@
     }
   }
 
-  // Load items on mount
-  refreshItems();
+  // Load items on mount and set up Tauri drag-drop events
+  onMount(() => {
+    refreshItems();
+
+    const webview = getCurrentWebviewWindow();
+    let unlisten: (() => void) | undefined;
+
+    webview.onDragDropEvent(async (event) => {
+      if (event.payload.type === 'enter') {
+        dragOver = true;
+      } else if (event.payload.type === 'leave') {
+        dragOver = false;
+      } else if (event.payload.type === 'drop') {
+        dragOver = false;
+        await handleFileDrop(event.payload.paths);
+      }
+    }).then(fn => { unlisten = fn; });
+
+    return () => {
+      unlisten?.();
+    };
+  });
 </script>
 
 <div class="app-layout">
@@ -342,7 +453,8 @@
             >
               <div class="file-item-top">
                 <span class="file-name">{item.name}</span>
-                <span class="file-badge">.{item.file_type}</span>
+                {#if item.warning}<span class="file-warning-icon" title="Extraction warning">&#9888;</span>{/if}
+                <span class="file-badge" class:file-badge-pdf={item.file_type === 'pdf'}>.{item.file_type}</span>
               </div>
               <div class="file-item-meta">
                 <span class="file-entity-count">{item.entity_count} {item.entity_count === 1 ? 'entity' : 'entities'}</span>
@@ -370,9 +482,8 @@
   <!-- Center: Content Viewer -->
   <main
     class="content-viewer"
-    ondragover={handleDragOver}
-    ondragleave={handleDragLeave}
-    ondrop={handleDrop}
+    ondragover={(e: DragEvent) => e.preventDefault()}
+    ondrop={(e: DragEvent) => e.preventDefault()}
   >
     {#if selectedItem}
       <div class="viewer-container">
@@ -392,6 +503,9 @@
           <div class="toolbar-actions">
             <button class="toolbar-btn" onclick={copyMaskedText}>Copy</button>
             <button class="toolbar-btn" onclick={exportFile}>Export</button>
+            {#if selectedItem.file_type === 'pdf' && selectedItem.raw_pdf_bytes}
+              <button class="toolbar-btn" onclick={exportMaskedPdf}>Export PDF (experimental)</button>
+            {/if}
           </div>
         </div>
         {#if viewMode === 'original'}
@@ -404,10 +518,16 @@
             {/each}
           </div>
         {/if}
+        {#if selectedItem.warning}
+          <div class="warning-banner">
+            <span class="warning-banner-icon">&#9888;</span>
+            <span>{selectedItem.warning}</span>
+          </div>
+        {/if}
         {#if viewMode === 'masked'}
-          <pre class="viewer-content">{selectedItem.masked_content}</pre>
+          <div class="viewer-content">{#each splitByPageMarkers(selectedItem.masked_content) as seg}{#if seg.type === 'marker'}<div class="page-marker">{seg.text}</div>{:else}{seg.text}{/if}{/each}</div>
         {:else}
-          <pre class="viewer-content">{#each buildHighlightedSegments(selectedItem.raw_content, selectedItem.entities) as segment}{#if segment.entity}<span class="entity-highlight entity-{segment.entity.entity_type.toLowerCase()}" data-tooltip="{'\u2192'} {segment.entity.token}">{segment.text}</span>{:else}{segment.text}{/if}{/each}</pre>
+          <div class="viewer-content">{#each splitByPageMarkers(selectedItem.raw_content) as seg}{#if seg.type === 'marker'}<div class="page-marker">{seg.text}</div>{:else}{#each buildHighlightedSegments(seg.text, getEntitiesForBlock(selectedItem.entities, seg)) as segment}{#if segment.entity}<span class="entity-highlight entity-{segment.entity.entity_type.toLowerCase()}" data-tooltip="{'\u2192'} {segment.entity.token}">{segment.text}</span>{:else}{segment.text}{/if}{/each}{/if}{/each}</div>
         {/if}
       </div>
     {:else}
@@ -430,7 +550,7 @@
           <div class="loading-spinner"></div>
           <p class="drop-zone-text">Processing files...</p>
         {:else}
-          <p class="drop-zone-text">Drop .txt, .md, .csv, or .json files here</p>
+          <p class="drop-zone-text">Drop .txt, .md, .csv, .json, or .pdf files here</p>
         {/if}
 
         <div class="paste-divider">or paste text</div>
@@ -683,6 +803,12 @@
   flex-shrink: 0;
 }
 
+.file-badge-pdf {
+  background-color: #fee2e2;
+  color: #dc2626;
+  font-weight: 600;
+}
+
 .file-item-meta {
   display: flex;
   justify-content: space-between;
@@ -823,6 +949,19 @@
   white-space: pre-wrap;
   word-wrap: break-word;
   color: #0f0f0f;
+}
+
+.page-marker {
+  text-align: center;
+  color: #999;
+  font-size: 12px;
+  padding: 8px 0;
+  margin: 8px 0;
+  border-top: 1px solid #e0e0e0;
+  border-bottom: 1px solid #e0e0e0;
+  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+  letter-spacing: 0.04em;
+  white-space: normal;
 }
 
 .entity-highlight {
@@ -1101,6 +1240,29 @@
   background: #b91c1c;
 }
 
+.warning-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background-color: #fef3c7;
+  border-bottom: 1px solid #f59e0b;
+  font-size: 13px;
+  color: #92400e;
+  flex-shrink: 0;
+}
+
+.warning-banner-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.file-warning-icon {
+  font-size: 12px;
+  color: #d97706;
+  flex-shrink: 0;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f6f6f6;
@@ -1153,6 +1315,11 @@
   .file-badge {
     background-color: #333;
     color: #aaa;
+  }
+
+  .file-badge-pdf {
+    background-color: rgba(220, 38, 38, 0.2);
+    color: #f87171;
   }
 
   .file-item:hover {
@@ -1222,6 +1389,12 @@
 
   .viewer-content {
     color: #f6f6f6;
+  }
+
+  .page-marker {
+    color: #777;
+    border-top-color: #444;
+    border-bottom-color: #444;
   }
 
   .entity-highlight:hover::after {
@@ -1306,6 +1479,16 @@
 
   .confirm-cancel:hover {
     background-color: #444;
+  }
+
+  .warning-banner {
+    background-color: rgba(245, 158, 11, 0.15);
+    border-bottom-color: #b45309;
+    color: #fbbf24;
+  }
+
+  .file-warning-icon {
+    color: #fbbf24;
   }
 }
 </style>

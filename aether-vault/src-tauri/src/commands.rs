@@ -1,6 +1,6 @@
 use crate::db::DbState;
 use serde::{Deserialize, Serialize};
-use std::io::Write;
+use std::io::{Cursor, Write};
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
 
@@ -22,6 +22,7 @@ pub struct ItemSummary {
     pub file_type: String,
     pub entity_count: i64,
     pub created_at: String,
+    pub warning: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -42,6 +43,8 @@ pub struct ItemDetail {
     pub raw_content: String,
     pub masked_content: String,
     pub created_at: String,
+    pub warning: Option<String>,
+    pub raw_pdf_bytes: Option<Vec<u8>>,
     pub entities: Vec<EntityOutput>,
 }
 
@@ -55,12 +58,14 @@ pub fn save_item(
     raw_content: String,
     masked_content: String,
     entities: Vec<EntityInput>,
+    warning: Option<String>,
+    raw_pdf_bytes: Option<Vec<u8>>,
 ) -> Result<i64, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
 
     conn.execute(
-        "INSERT INTO items (name, file_type, raw_content, masked_content) VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![name, file_type, raw_content, masked_content],
+        "INSERT INTO items (name, file_type, raw_content, masked_content, warning, raw_pdf_bytes) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![name, file_type, raw_content, masked_content, warning, raw_pdf_bytes],
     )
     .map_err(|e| e.to_string())?;
 
@@ -90,7 +95,7 @@ pub fn list_items(db: State<'_, DbState>) -> Result<Vec<ItemSummary>, String> {
 
     let mut stmt = conn
         .prepare(
-            "SELECT i.id, i.name, i.file_type, COUNT(e.id) AS entity_count, i.created_at
+            "SELECT i.id, i.name, i.file_type, COUNT(e.id) AS entity_count, i.created_at, i.warning
              FROM items i
              LEFT JOIN entities e ON e.item_id = i.id
              GROUP BY i.id
@@ -106,6 +111,7 @@ pub fn list_items(db: State<'_, DbState>) -> Result<Vec<ItemSummary>, String> {
                 file_type: row.get(2)?,
                 entity_count: row.get(3)?,
                 created_at: row.get(4)?,
+                warning: row.get(5)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -124,7 +130,7 @@ pub fn get_item(db: State<'_, DbState>, item_id: i64) -> Result<ItemDetail, Stri
 
     let item = conn
         .query_row(
-            "SELECT id, name, file_type, raw_content, masked_content, created_at FROM items WHERE id = ?1",
+            "SELECT id, name, file_type, raw_content, masked_content, created_at, warning, raw_pdf_bytes FROM items WHERE id = ?1",
             rusqlite::params![item_id],
             |row| {
                 Ok(ItemDetail {
@@ -134,6 +140,8 @@ pub fn get_item(db: State<'_, DbState>, item_id: i64) -> Result<ItemDetail, Stri
                     raw_content: row.get(3)?,
                     masked_content: row.get(4)?,
                     created_at: row.get(5)?,
+                    warning: row.get(6)?,
+                    raw_pdf_bytes: row.get(7)?,
                     entities: Vec::new(),
                 })
             },
@@ -198,6 +206,122 @@ pub fn delete_item(db: State<'_, DbState>, item_id: i64) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+// --- File read commands (for Tauri drag-drop which provides file paths) ---
+
+#[tauri::command]
+pub fn read_file_text(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn read_file_bytes(path: String) -> Result<Vec<u8>, String> {
+    std::fs::read(&path).map_err(|e| e.to_string())
+}
+
+// --- PDF commands ---
+
+#[derive(Serialize)]
+pub struct PdfExtractResult {
+    pub text: String,
+    pub page_count: u32,
+    pub has_warning: bool,
+}
+
+#[tauri::command]
+pub fn extract_pdf_text(content: Vec<u8>) -> Result<PdfExtractResult, String> {
+    let doc = lopdf::Document::load_from(Cursor::new(content))
+        .map_err(|_| "Failed to parse PDF file.".to_string())?;
+
+    let pages = doc.get_pages();
+    let page_count = pages.len() as u32;
+    let mut texts: Vec<String> = Vec::new();
+    let mut empty_pages = 0u32;
+
+    for (i, page_num) in pages.keys().enumerate() {
+        let page_text = doc
+            .extract_text(&[*page_num])
+            .unwrap_or_default();
+        let trimmed = page_text.trim().to_string();
+
+        if i > 0 {
+            texts.push(format!("\n\n--- Page {} ---\n\n", page_num));
+        }
+
+        if trimmed.is_empty() {
+            empty_pages += 1;
+        }
+
+        texts.push(trimmed);
+    }
+
+    let combined = texts.join("");
+
+    if combined.trim().is_empty() {
+        return Err(
+            "No extractable text found. This may be a scanned document.".to_string(),
+        );
+    }
+
+    let has_warning = empty_pages > 0 && empty_pages < page_count;
+
+    Ok(PdfExtractResult {
+        text: combined,
+        page_count,
+        has_warning,
+    })
+}
+
+// --- PDF export commands ---
+
+#[derive(Deserialize)]
+pub struct ReplacementPair {
+    pub original: String,
+    pub token: String,
+}
+
+#[tauri::command]
+pub async fn export_masked_pdf(
+    app: tauri::AppHandle,
+    pdf_bytes: Vec<u8>,
+    replacements: Vec<ReplacementPair>,
+    file_name: String,
+) -> Result<bool, String> {
+    let mut doc = lopdf::Document::load_from(Cursor::new(pdf_bytes))
+        .map_err(|_| "Failed to parse PDF file.".to_string())?;
+
+    let page_numbers: Vec<u32> = doc.get_pages().keys().copied().collect();
+    for pair in &replacements {
+        for &page_num in &page_numbers {
+            // replace_text may fail on some pages (e.g., unsupported font encodings); skip those
+            let _ = doc.replace_text(page_num, &pair.original, &pair.token);
+        }
+    }
+
+    let default_name = format!(
+        "{}_masked.pdf",
+        file_name.trim_end_matches(".pdf")
+    );
+
+    let file_path = app
+        .dialog()
+        .file()
+        .set_file_name(&default_name)
+        .add_filter("PDF file", &["pdf"])
+        .blocking_save_file();
+
+    let file_path = match file_path {
+        Some(path) => path,
+        None => return Ok(false), // User cancelled
+    };
+
+    let mut file = std::fs::File::create(file_path.as_path().unwrap())
+        .map_err(|e| format!("Failed to create output file: {}", e))?;
+    doc.save_to(&mut file)
+        .map_err(|e| format!("Failed to save masked PDF: {}", e))?;
+
+    Ok(true)
 }
 
 // --- Export commands ---

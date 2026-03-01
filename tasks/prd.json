@@ -18,7 +18,7 @@
         "cargo check passes"
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Use ALTER TABLE ADD COLUMN wrapped in a check to make it idempotent. rusqlite will error if the column already exists, so catch that error and ignore it."
     },
     {
@@ -39,7 +39,7 @@
         "cargo check passes"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "lopdf::Document::load_from() accepts impl Read. Use std::io::Cursor<Vec<u8>> to wrap the bytes. document.get_pages() returns a BTreeMap<u32, ObjectId> — iterate sorted keys for page order."
     },
     {
@@ -59,7 +59,7 @@
         "cargo check passes"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "lopdf replace_text() may not work for all font encodings. The frontend should catch errors and fall back to .txt export."
     },
     {
@@ -78,7 +78,7 @@
         "Verify in browser using dev tools"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "PDF files must be read as ArrayBuffer (not text). The bytes are sent to Rust as Vec<u8> via invoke. Non-PDF files continue to use FileReader.readAsText() as before."
     },
     {
@@ -96,7 +96,7 @@
         "Verify in browser using dev tools"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
@@ -113,7 +113,7 @@
         "Verify in browser using dev tools"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "Page marker detection can use a simple regex: /\\n?--- Page \\d+ ---\\n?/g to identify marker positions in the text."
     },
     {
@@ -129,7 +129,7 @@
         "pnpm check passes"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "This mostly works already — just need to ensure that when file_type is 'pdf', the export uses .txt extension instead of .pdf."
     },
     {
@@ -147,7 +147,7 @@
         "Verify in browser using dev tools"
       ],
       "priority": 8,
-      "passes": false,
+      "passes": true,
       "notes": "raw_pdf_bytes comes from the get_item response. It may need to be base64-decoded on the frontend before passing back to Rust as an array."
     }
   ]

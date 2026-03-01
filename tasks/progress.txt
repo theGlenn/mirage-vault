@@ -25,6 +25,118 @@
 - Async Tauri commands with `pub async fn` when using dialog blocking methods
 - `blocking_save_file()` returns `Option<FilePath>` — use `.as_path().unwrap()` to get `&Path`
 - Tauri `invoke()` uses camelCase parameter names (e.g., `fileType`, `rawContent`), which map to snake_case Rust params automatically
+- lopdf: use `Document::load_from(Cursor::new(bytes))` for in-memory PDF loading; `doc.get_pages()` returns sorted `BTreeMap<u32, ObjectId>`; `doc.extract_text(&[page])` returns text per page
+- lopdf `replace_text()` takes 3 args: `(page_number: u32, text: &str, other_text: &str)` — must iterate per page; `save_to()` takes `&mut W: Write`, use `File::create()` then pass `&mut file`
 - `refreshItems()` pattern: call `invoke<T[]>('list_items')` after any mutation to keep sidebar in sync
+- Page marker regex: `/\n*--- Page \d+ ---\n*/g` — use `\n*` to capture surrounding newlines; strip them from display text
+- `splitByPageMarkers()` and `getEntitiesForBlock()` in `+page.svelte` handle per-block entity highlighting for PDF page markers
+- Content viewer uses `<div class="viewer-content">` with `white-space: pre-wrap` — equivalent to `<pre>` but allows block-level child elements for page markers
+- Rust `Vec<u8>` serde-serializes to a JSON number array; frontend type is `number[]`, and can be sent back to Tauri commands directly without base64
 ---
 
+## 2026-02-28 - US-001
+- Added idempotent ALTER TABLE migrations in `db.rs` to add `warning TEXT` and `raw_pdf_bytes BLOB` columns
+- Updated `ItemSummary` and `ItemDetail` structs with `warning: Option<String>` field
+- Updated `save_item` command to accept optional `warning` and `raw_pdf_bytes` parameters
+- Updated `list_items` and `get_item` queries to include the `warning` column
+- Files changed: `aether-vault/src-tauri/src/db.rs`, `aether-vault/src-tauri/src/commands.rs`
+- **Learnings for future iterations:**
+  - SQLite `ALTER TABLE ADD COLUMN` errors with "duplicate column name" if column exists — catch and ignore that specific error string for idempotent migrations
+  - `Option<T>` in Tauri command params maps to optional JS args; rusqlite handles `Option<T>` as nullable columns automatically
+  - New optional params on existing commands don't break existing frontend callers (they just pass `undefined`/omit the param)
+---
+
+## 2026-02-28 - US-002
+- Added `lopdf = "0.34"` dependency to Cargo.toml
+- Created `extract_pdf_text` Tauri command that extracts text from PDF bytes page by page
+- Added `PdfExtractResult` response struct with `text`, `page_count`, `has_warning` fields
+- Registered `extract_pdf_text` in the Tauri builder `generate_handler!`
+- Files changed: `aether-vault/src-tauri/Cargo.toml`, `aether-vault/src-tauri/src/commands.rs`, `aether-vault/src-tauri/src/lib.rs`
+- **Learnings for future iterations:**
+  - `lopdf::Document::load_from()` accepts `impl Read` — use `std::io::Cursor<Vec<u8>>` to wrap bytes
+  - `doc.get_pages()` returns `BTreeMap<u32, ObjectId>` — keys are already sorted page numbers
+  - `doc.extract_text(&[page_num])` can silently return empty string for scanned/image pages — use `unwrap_or_default()` and count empties for warnings
+  - Page markers use format `\n\n--- Page N ---\n\n` between pages (not before the first page)
+---
+
+## 2026-02-28 - US-003
+- Created `ReplacementPair` serde struct with `original` and `token` String fields
+- Implemented `export_masked_pdf` async Tauri command that loads PDF via lopdf, replaces text per-page, opens native save dialog, and writes the modified PDF
+- Registered `export_masked_pdf` in the Tauri builder `generate_handler!`
+- Files changed: `aether-vault/src-tauri/src/commands.rs`, `aether-vault/src-tauri/src/lib.rs`
+- **Learnings for future iterations:**
+  - lopdf `replace_text()` signature is `(page_number: u32, text: &str, other_text: &str)` — requires iterating over all pages
+  - `replace_text()` can fail on pages with unsupported font encodings — silently ignore per-page errors with `let _ =`
+  - `save_to()` takes `&mut W: Write` — create a `File` first, then pass `&mut file` (not a `Path`)
+  - Return `Ok(false)` when user cancels the save dialog, `Ok(true)` on success — lets frontend distinguish cancellation from errors
+---
+
+## 2026-02-28 - US-004
+- Updated drop zone to accept .pdf files alongside .txt, .md, .csv, .json
+- Updated instructional text and error message to include .pdf
+- Added `readFileAsArrayBuffer()` helper for reading PDF files as binary
+- Created `ingestPdfFile()` function: reads PDF as ArrayBuffer, calls `extract_pdf_text` Tauri command, feeds extracted text through detect/mask pipeline, saves with file_type 'pdf', warning, and raw_pdf_bytes
+- Added `PdfExtractResult` interface to match the Rust response struct
+- Added `warning` field to `VaultItem` and `ItemDetail` interfaces to match backend structs
+- Branched `handleDrop` to route .pdf files through `ingestPdfFile` and other files through `ingestFile`
+- Files changed: `aether-vault/src/routes/+page.svelte`, `tasks/prd.json`
+- **Learnings for future iterations:**
+  - PDF bytes are sent to Rust as `Array.from(new Uint8Array(buffer))` — Tauri auto-converts JS number arrays to `Vec<u8>`
+  - `readFileAsArrayBuffer` must be a separate helper from `readFileAsText` — PDF files cannot be read as text
+  - Tauri `invoke()` uses camelCase param names (`rawPdfBytes`) which map to snake_case Rust params (`raw_pdf_bytes`) automatically
+  - Optional Tauri command params can be omitted or passed as `undefined` from JS — no need to explicitly pass `null`
+---
+
+## 2026-02-28 - US-005
+- Added yellow warning banner above content viewer for PDF items with non-null warning field
+- Banner displays between toolbar/legend and content area, visible in both Masked and Original view modes
+- Added warning indicator (⚠) next to file name in sidebar for items with warnings
+- Styled for both light mode (amber/yellow background) and dark mode (translucent amber)
+- Non-PDF items and PDFs without warnings show no banner or indicator
+- Files changed: `aether-vault/src/routes/+page.svelte`, `tasks/prd.json`
+- **Learnings for future iterations:**
+  - Warning banner placement: insert between entity-legend/toolbar and the `{#if viewMode}` content block so it appears in both view modes
+  - `item.warning` is `string | null` — a simple `{#if item.warning}` check handles both null and empty string correctly in Svelte
+  - Use HTML entity `&#9888;` for the ⚠ character in Svelte templates to avoid encoding issues
+---
+
+## 2026-02-28 - US-006
+- Added `splitByPageMarkers()` function to split text into content blocks and page marker blocks using regex `/\n*--- Page \d+ ---\n*/g`
+- Added `getEntitiesForBlock()` helper to filter and offset-adjust entities for each content block
+- Changed content viewer from `<pre>` to `<div>` (`.viewer-content` CSS already handles `white-space: pre-wrap`)
+- Both Masked and Original views now render page markers as styled centered divs with horizontal rules above/below
+- Entity highlighting in Original view correctly skips page marker regions — entities are filtered per content block with adjusted spans
+- Added `.file-badge-pdf` class for visually distinct red PDF badge in the file list sidebar
+- Added `.page-marker` CSS with light/dark mode support
+- Files changed: `aether-vault/src/routes/+page.svelte`, `tasks/prd.json`
+- **Learnings for future iterations:**
+  - Use `\n*` (not `\n?`) in page marker regex to greedily capture all surrounding newlines — the marker div provides its own visual spacing
+  - Strip captured newlines from marker text with `.replace(/^\n+|\n+$/g, '')` before displaying
+  - When splitting text by markers for entity highlighting, filter entities by `span_start >= block.start && span_end <= block.end` and adjust spans by subtracting `block.start`
+  - Switching `<pre>` to `<div>` with `white-space: pre-wrap` is safe when the CSS already defines the monospace font and whitespace behavior
+  - Keep Svelte template blocks on one line inside `white-space: pre-wrap` containers to avoid injecting whitespace
+---
+
+## 2026-02-28 - US-007
+- Updated `exportFile()` to pass `'txt'` as `fileExtension` and rename `.pdf` → `.txt` in `fileName` for PDF items
+- Updated `exportAll()` to pass `'txt'` as `fileType` and rename `.pdf` → `.txt` in `name` for PDF items in zip export
+- Clipboard copy already worked for PDF items (copies `masked_content` directly)
+- Files changed: `aether-vault/src/routes/+page.svelte`, `tasks/prd.json`
+- **Learnings for future iterations:**
+  - The `export_file` Rust command uses `trim_end_matches(".{ext}")` on the filename — when changing the export extension (e.g., pdf→txt), must also rename the extension in the filename so the trim works correctly
+  - Same pattern applies to `export_zip` — both the `name` and `fileType` must be adjusted together for the entry naming to work
+  - `copyMaskedText()` is extension-agnostic — it just copies `masked_content` text, so no changes needed for clipboard copy
+---
+
+## 2026-02-28 - US-008
+- Added `raw_pdf_bytes: Option<Vec<u8>>` to Rust `ItemDetail` struct and updated `get_item` SQL query to include the column
+- Added `raw_pdf_bytes: number[] | null` to frontend `ItemDetail` interface
+- Created `exportMaskedPdf()` function: builds unique replacement pairs from entities, calls `export_masked_pdf` Tauri command, shows success/error toast, falls back to .txt export on error
+- Added "Export PDF (experimental)" button to toolbar, conditionally rendered only for PDF items with `raw_pdf_bytes`
+- Files changed: `aether-vault/src-tauri/src/commands.rs`, `aether-vault/src/routes/+page.svelte`, `tasks/prd.json`
+- **Learnings for future iterations:**
+  - Rust `Vec<u8>` serialized via serde becomes a JSON array of numbers — the frontend type is `number[]`, not `Uint8Array`
+  - When passing bytes back to a Tauri command from JS, the `number[]` from the JSON response can be sent directly — no base64 encoding/decoding needed
+  - Build unique replacement pairs using a `Set` with a composite key (`original\0token`) to avoid duplicate replacements across multiple entity spans
+  - The `export_masked_pdf` Tauri command param is `pdfBytes` (camelCase) which maps to Rust `pdf_bytes`
+---
