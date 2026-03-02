@@ -24,7 +24,7 @@
 
 ## Overview
 
-**Mistral Mirage** is a **privacy-focused vault** that masks sensitive data locally before it reaches any LLM. It uses **embedded AI** — **Ministral 3 1B** running locally with **Xybrid** — to detect and redact PII (Personally Identifiable Information) in both **PDFs and prompts**, ensuring your data never leaves your machine unmasked.
+**Mistral Mirage** is a **privacy-focused vault** that masks sensitive data locally before it reaches any LLM. It uses **embedded AI** — **Ministral 3 1B** running locally with **[Xybrid](https://github.com/xybrid-ai/xybrid)** — to detect and redact PII (Personally Identifiable Information) in both **PDFs and prompts**, ensuring your data never leaves your machine unmasked.
 
 Connect to any model via **MCP (Model Context Protocol)** — your data never leaves unprotected.
 
