@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://worldwide-hackathon.mistral.ai/">🚀 Mistral Worldwide Hackathon 2025 Submission</a>
+  <a href="https://worldwide-hackathon.mistral.ai/">🚀 Mistral Worldwide Hackathon 2026 Submission</a>
 </p>
 
 <p align="center">
@@ -28,7 +28,7 @@
 
 Connect to any model via **MCP (Model Context Protocol)** — your data never leaves unprotected.
 
-Built for the **Mistral Worldwide Hackathon 2025**.
+Built for the **Mistral Worldwide Hackathon 2026**.
 
 ## The Problem
 
@@ -194,9 +194,9 @@ This hybrid approach runs entirely locally—**no data leaves your machine**. Mi
 
 See [ROADMAP.md](ROADMAP.md) for the full implementation plan.
 
-## Mistral Worldwide Hackathon 2025
+## Mistral Worldwide Hackathon 2026
 
-This project was created for the **Mistral Worldwide Hackathon 2025**—a global event celebrating innovation in AI.
+This project was created for the **Mistral Worldwide Hackathon 2026**—a global event celebrating innovation in AI.
 
 ### Hackathon Goals
 
@@ -221,7 +221,7 @@ MIT License - see LICENSE for details.
 ---
 
 <p align="center">
-  Built for the <a href="https://worldwide-hackathon.mistral.ai/">Mistral Worldwide Hackathon 2025</a>
+  Built for the <a href="https://worldwide-hackathon.mistral.ai/">Mistral Worldwide Hackathon 2026</a>
 </p>
 <p align="center">
   <sub>Privacy-first AI interactions for everyone</sub>
