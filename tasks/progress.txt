@@ -1,7 +1,12 @@
 ## Codebase Patterns
+- MCP sidecar state: `McpServerState { child: Mutex<Option<Child>>, passphrase: Mutex<Option<String>> }` — managed in lib.rs setup
+- `stop_mcp_process()` is public for use in lib.rs `RunEvent::Exit` handler — keep it public
+- `init_encryption` and `clear_encryption_key` accept `State<McpServerState>` — Tauri auto-injects, no frontend changes needed
+- `find_mcp_script()` checks env var → dev path (CARGO_MANIFEST_DIR) → production path (next to exe) — add new paths as needed
+- App exit cleanup: use `.build().run(|handle, event|)` pattern instead of `.run(context)` to handle `RunEvent::Exit`
 - Tauri 2 app: Rust backend in `mirage-vault/src-tauri/src/`, frontend in `mirage-vault/src/`
 - Frontend TypeScript modules live in `mirage-vault/src/lib/` (SvelteKit `$lib` alias)
-- Run tests with `npx tsx --test <file>` from the `mirage-vault/` directory
+- Run tests with `npx tsx --test <file>` from the `mirage-vault/mcp-server/` directory
 - Detection types defined in `src/lib/detectors/types.ts`: `Detection` interface and `EntityType` union
 - Must `use tauri::Manager;` to access `.manage()` and `.path()` on App/AppHandle
 - Database state uses `Mutex<Connection>` wrapped in a struct: `DbState(pub Mutex<Connection>)`
@@ -38,7 +43,7 @@
 - Crypto: `crypto::encrypt(key, plaintext)` and `crypto::decrypt(key, ciphertext)` — key from `CryptoState` managed state
 - Encryption fallback: if decryption fails, return raw string (handles pre-encryption data)
 - SessionList component: exports `SessionSummary` interface, uses `onselectsession` callback prop
-- ConfirmDialog can be rendered inside child components (not just +page.svelte) since overlay uses `position: absolute; inset: 0`
+- ConfirmDialog is rendered inside child components (not just +page.svelte) since overlay uses `position: absolute; inset: 0`
 - SessionDetail component: `<SessionDetail sessionId={id} onback={() => ...} />` — loads session data on mount via `invoke('get_session')`
 - SessionEntryCard component: `<SessionEntryCard entry={e} itemName={name} onselect={(id) => ...} />` — exports `SessionEntry` interface
 - Output entries use `--color-grim-blue` accent, input entries use `--accent-orange` — consistent complementary color scheme
@@ -48,221 +53,219 @@
 - Session item linking flow: `add_item_to_session` → `reconcile_item_tokens` → `get_item` → `add_session_entry` (input type)
 - Tauri drag-drop context routing: check `activeView` and `selectedSessionId` in the global drop handler to route to session-aware or browse-aware ingestion
 - `export function` in Svelte 5 instance script exposes methods on component instance via `bind:this`
-- SessionEntryPopup component: `<SessionEntryPopup entry={e} sessionId={id} sessionEntities={entities} onclose={() => ...} onrefresh={() => ...} />` — overlay with masked/decoded toggle and token highlighting
-- Session entities for token mapping: `invoke('get_session_entities', { sessionId })` returns `SessionEntityOutput[]` with `entity_type`, `original_value`, `token`
+- SessionEntryPopup component: overlay with masked/decoded toggle and token highlighting
+- Session entities for token mapping: `invoke('get_session_entities', { sessionId })` returns `SessionEntityOutput[]`
+- MCP server: TypeScript package in `mirage-vault/mcp-server/` with dual transport (stdio + SSE)
+- Desktop Extension packaging: `manifest.json` v0.3 format, `pnpm run package` builds and packs .mcpb, `.mcpbignore` excludes devDependencies
+- `export_mcpb(dest_path)` Rust command: `find_mcpb_file()` follows same pattern as `find_mcp_script()` (env var → dev → production paths)
+- `@tauri-apps/plugin-dialog` `save()` returns a file path — use with Rust command for file copy workflow
+- Settings sections: use `.settings-section` class with `.section-label` h3 and `.subsection-label` h4 for nested groups
+- SQLite INTEGER for booleans: read as i64, convert with `!= 0` for Rust bool fields
+- MCP SDK imports: `McpServer` from `@modelcontextprotocol/sdk/server/mcp.js`, `StdioServerTransport` from `@modelcontextprotocol/sdk/server/stdio.js`
+- MCP SDK uses `server.registerTool()` with zod schemas for input validation
+- MCP server tsconfig: target ES2022, module Node16, moduleResolution Node16, type: "module" in package.json; test files excluded from build
+- Crypto compatibility: `deriveKey(passphrase)` → SHA-256, `decrypt(key, ciphertext)` → AES-256-GCM matching Rust format base64(nonce[12]||ciphertext||tag[16])
+- `decryptSafe(key, ciphertext)` returns raw string on failure — use for DB fields that may be plaintext or encrypted
+- MCP server `createServer(db?)` factory in `src/core/server.ts` — transport-agnostic, wired in index files; tools registered only when VaultDB provided
+- MCP tool registration: `server.tool(name, description, { param: z.type() }, handler)` — handler returns `{ content: [{ type: 'text', text }] }`
+- MCP tools file: `src/core/tools.ts` exports `registerTools(server, db)` — all tool registrations go here
+- VaultDB initialized in index entry points from env vars MIRAGE_VAULT_PASSPHRASE and MIRAGE_VAULT_DB_PATH
+- MCP tool access control: `get_entity_legend` uses `getSessionMcpStatus()` check; `get_masked_item` relies on VaultDB's SQL-level access check (EXISTS/NOT EXISTS pattern)
+- MCP resources: `registerResources(server, db)` in `src/core/resources.ts` — wired in `server.ts` alongside `registerTools()`
+- MCP ResourceTemplate: `new ResourceTemplate(uriTemplate, { list: callback })` — list callback returns available resources for template URIs
+- MCP resource handler receives `(uri: URL, variables: Variables)` — variables extracted from URI template; use `Number(variables.session_id)` to parse
+- better-sqlite3 needs native build — use `pnpm.onlyBuiltDependencies` in package.json
+- VaultDB class in `src/core/db.ts`: readonly better-sqlite3 connection, takes `(key, dbPath?)` — default path based on `process.platform`
+- `getSessionMcpStatus(sessionId)` lightweight check: returns `{ id, mcp_shared }` without loading full session data — use for access control in tools
+- Session entry `raw_content` is encrypted — use `decryptSafe(key, row.raw_content)` when reading
+- Items `masked_content` is NOT encrypted — read directly from DB
+- Entity `original_value` is encrypted but NEVER exposed via MCP — only serve `entity_type` and `token`
+- `getMaskedItem` access check: item must be in an mcp_shared session OR not in any session (EXISTS/NOT EXISTS pattern)
 ---
 
-## 2026-03-01 - US-001
-- Implemented sessions database schema: `sessions`, `session_items`, `session_entries` tables with IF NOT EXISTS
-- Added indexes on session_items(session_id), session_items(item_id), session_entries(session_id)
-- Added idempotent `ALTER TABLE items ADD COLUMN session_id INTEGER` migration
-- Foreign keys cascade on delete for sessions → session_items and sessions → session_entries; source_item_id uses ON DELETE SET NULL
-- Files changed: `mirage-vault/src-tauri/src/db.rs`
+## 2026-03-02 - US-001
+- Implemented mcp_shared column and toggle command for MCP session sharing
+- Files changed:
+  - `mirage-vault/src-tauri/src/db.rs` — added idempotent migration for `mcp_shared` column
+  - `mirage-vault/src-tauri/src/commands.rs` — added `mcp_shared: bool` to SessionSummary and SessionDetail, updated list_sessions/get_session queries, added `toggle_session_mcp_shared` command
+  - `mirage-vault/src-tauri/src/lib.rs` — registered new command in generate_handler![]
 - **Learnings for future iterations:**
-  - New tables go in the `execute_batch` block alongside existing tables — just extend the SQL string
-  - New column migrations go in the `migrations` array with the existing ALTER TABLE pattern
-  - `cargo check` from `mirage-vault/src-tauri/` is the validation command
+  - SQLite INTEGER booleans: read as i64 from rusqlite row, convert to bool with `!= 0`
+  - The existing migration array pattern in db.rs makes adding new columns trivial — just append to the array
+  - SELECT column order must match row.get() indices — when adding a column, put it at the end to avoid reindexing
 ---
 
-## 2026-03-01 - US-002
-- Implemented Tauri commands for session CRUD: `create_session`, `list_sessions`, `get_session`
-- Added Serialize structs: `SessionSummary`, `SessionDetail`, `SessionEntryOutput`, `SessionItemOutput`
-- `list_sessions` uses correlated subqueries for item_count and entry_count, ordered by updated_at DESC
-- `get_session` loads session row, then entries (with decrypt fallback) and items (with entity count via LEFT JOIN)
-- Registered all three commands in lib.rs generate_handler![]
-- Removed duplicate `commands::update_item_masking` registration from lib.rs
-- Files changed: `mirage-vault/src-tauri/src/commands.rs`, `mirage-vault/src-tauri/src/lib.rs`
+## 2026-03-02 - US-002
+- Implemented MCP share toggle in vault UI
+- Files changed:
+  - `mirage-vault/src/lib/components/PixelIcon.svelte` — added 'link' icon to IconName union and SVG paths
+  - `mirage-vault/src/lib/components/SessionDetail.svelte` — added `mcp_shared` to SessionDetailData interface, added toggle button in header with `handleToggleMcp()` handler calling `invoke('toggle_session_mcp_shared')`, styled with `--color-grim-blue` accent
+  - `mirage-vault/src/lib/components/SessionList.svelte` — added `mcp_shared` to SessionSummary interface, added MCP badge in card header when `mcp_shared` is true
 - **Learnings for future iterations:**
-  - Correlated subqueries in list queries are simpler when counting from multiple join tables
-  - `get_session` loads entries and items separately then merges via `..session` struct update
-  - Encrypted fields in session_entries use same decrypt-with-fallback pattern as get_item
-  - lib.rs had a duplicate `update_item_masking` registration — watch for duplicates when adding new commands
+  - Toggle button pattern: use a `class:active` conditional class for on/off state styling instead of swapping components
+  - `--color-grim-blue` is the accent color for output/MCP-related UI elements, `--color-orange` for input/primary actions
+  - PixelIcon is easy to extend: add name to union type, add `{:else if}` block with SVG path
+  - SessionDetailData and SessionSummary TypeScript interfaces must match Rust struct fields — when Rust adds a field, update both TS interfaces
 ---
 
-## 2026-03-01 - US-003
-- Implemented four Tauri commands: `update_session`, `archive_session`, `unarchive_session`, `delete_session`
-- `update_session` updates name and updated_at timestamp
-- `archive_session` / `unarchive_session` toggle status between 'archived' and 'active', updating updated_at
-- `delete_session` deletes the session row; ON DELETE CASCADE handles session_items and session_entries cleanup
-- All commands return error if session not found (updated/deleted == 0 check)
-- Registered all four commands in lib.rs generate_handler![]
-- Files changed: `mirage-vault/src-tauri/src/commands.rs`, `mirage-vault/src-tauri/src/lib.rs`
+## 2026-03-02 - US-003
+- Scaffolded MCP server TypeScript package at `mirage-vault/mcp-server/`
+- Files changed:
+  - `mirage-vault/mcp-server/package.json` — package config with @modelcontextprotocol/sdk, better-sqlite3, zod dependencies
+  - `mirage-vault/mcp-server/tsconfig.json` — Node16 module/resolution, ES2022 target, strict mode
+  - `mirage-vault/mcp-server/.gitignore` — excludes node_modules/ and dist/
+  - `mirage-vault/mcp-server/src/core/types.ts` — shared TypeScript interfaces for sessions, items, entities
+  - `mirage-vault/mcp-server/src/core/server.ts` — `createServer()` factory returning transport-agnostic McpServer instance
+  - `mirage-vault/mcp-server/src/index-stdio.ts` — wires StdioServerTransport to the server
+  - `mirage-vault/mcp-server/src/index-sse.ts` — stub logging "not yet implemented"
 - **Learnings for future iterations:**
-  - Simple UPDATE/DELETE commands follow the same pattern: lock mutex, execute, check affected rows, return Ok/Err
-  - No need for explicit transaction on single DELETE — the ON DELETE CASCADE foreign keys handle related row cleanup
-  - The `updated == 0` / `deleted == 0` pattern provides clean "not found" error handling
+  - MCP SDK v1.27.1 import paths use `.js` extension: `@modelcontextprotocol/sdk/server/mcp.js`
+  - `McpServer` constructor takes `{ name, version }` — version read from package.json at runtime
+  - `StdioServerTransport` connects via `await server.connect(transport)` — top-level await works with ESM
+  - For stdio servers, use `console.error()` for logging (stdout is reserved for JSON-RPC)
+  - better-sqlite3 requires native compilation — add `pnpm.onlyBuiltDependencies` to package.json
+  - MCP initialize handshake responds with `protocolVersion`, `capabilities`, and `serverInfo`
 ---
 
-## 2026-03-01 - US-004
-- Implemented three Tauri commands: `add_item_to_session`, `remove_item_from_session`, `get_session_entities`
-- Added `SessionEntityOutput` Serialize struct with entity_type, original_value, token
-- `add_item_to_session` inserts into session_items and updates sessions.updated_at
-- `remove_item_from_session` deletes from session_items with `deleted == 0` check, updates sessions.updated_at
-- `get_session_entities` joins session_items → entities, decrypts original_value, deduplicates by (entity_type, original_value) keeping the first token encountered, preserving insertion order
-- Added `std::collections::HashMap` import for deduplication logic
-- Registered all three commands in lib.rs generate_handler![]
-- Files changed: `mirage-vault/src-tauri/src/commands.rs`, `mirage-vault/src-tauri/src/lib.rs`
+## 2026-03-02 - US-004
+- Implemented crypto compatibility module for AES-256-GCM decryption matching Rust backend
+- Files changed:
+  - `mirage-vault/mcp-server/src/core/crypto.ts` — deriveKey (SHA-256), encrypt, decrypt, decryptSafe functions using Node.js crypto
+  - `mirage-vault/mcp-server/src/core/crypto.test.ts` — 15 unit tests covering key derivation, round-trip encryption, error handling, and safe fallback
+  - `mirage-vault/mcp-server/tsconfig.json` — excluded test files from build output
 - **Learnings for future iterations:**
-  - For deduplication with order preservation, use a HashMap for seen keys + a Vec for insertion order
-  - The UNIQUE constraint on session_items(session_id, item_id) handles duplicate link prevention at the DB level — the INSERT will error naturally
-  - Entity queries across a session require joining through session_items to get entities from all linked items
+  - Node.js `createDecipheriv('aes-256-gcm')` requires `setAuthTag()` before `update()`/`final()` — tag is last 16 bytes of decoded buffer
+  - Rust format: base64(nonce[12] || ciphertext || tag[16]) — use `subarray` to split the decoded buffer
+  - `encrypt()` function added for test round-trips even though MCP server only needs decrypt — useful for integration testing
+  - Test files excluded from build with `"src/**/*.test.ts"` in tsconfig exclude array
 ---
 
-## 2026-03-01 - US-005
-- Implemented two Tauri commands: `add_session_entry`, `decode_session_entry`
-- `add_session_entry` encrypts raw_content, inserts into session_entries, updates sessions.updated_at, returns new entry id
-- `decode_session_entry` loads all entities across session items via session_items join, builds token→original_value map, decrypts entry's raw_content, uses regex `\[\[(\w+)[_:](\w+)\]\]` to match both `[[TYPE:HASH]]` and `[[TYPE_N]]` formats, replaces tokens via `replace_all` with closure lookup, encrypts decoded result, stores in decoded_content column, returns decoded text
-- Tokens with no match in the session vault are left as-is (partial decode is valid)
-- Added `use regex::Regex` import (regex crate was already in Cargo.toml)
-- Registered both commands in lib.rs generate_handler![]
-- Files changed: `mirage-vault/src-tauri/src/commands.rs`, `mirage-vault/src-tauri/src/lib.rs`
+## 2026-03-02 - US-005
+- Implemented database connection module with VaultDB class for read-only SQLite access
+- Files changed:
+  - `mirage-vault/mcp-server/src/core/db.ts` — VaultDB class with listSessions, searchSessions, getSession, getSessionItem, getEntityLegend, getMaskedItem methods
 - **Learnings for future iterations:**
-  - `regex::Regex::new()` returns a Result — map_err for consistent error handling
-  - `replace_all` with a closure is the idiomatic way to do conditional replacements — the closure receives `Captures` and returns the replacement string
-  - Token map key should be the full token string (e.g., `[[EMAIL:a3f2c1b9]]`) since that's what appears in the text
-  - Use `HashMap::entry().or_insert()` to keep the first token mapping when duplicates exist
+  - better-sqlite3 `{ readonly: true }` option opens DB in read-only mode — matches MCP server's read-only contract
+  - better-sqlite3 uses synchronous API (`.prepare().all()`, `.get()`) unlike async APIs — simpler than rusqlite but same pattern
+  - Session entry `raw_content` and `decoded_content` are encrypted in DB — always use `decryptSafe()` when reading
+  - `items.masked_content` is NOT encrypted — stored as plaintext since it only contains tokens
+  - `entities.original_value` is encrypted and MUST NEVER be served via MCP — security invariant
+  - `getMaskedItem` uses a nested EXISTS/NOT EXISTS SQL pattern to check MCP access without joining sessions
+  - Default DB path varies by platform: macOS `~/Library/Application Support/com.shroudai.vault/vault.db`, Linux `~/.local/share/com.shroudai.vault/vault.db`
 ---
 
-## 2026-03-01 - US-006
-- Implemented `reconcile_item_tokens(session_id, item_id)` Tauri command for cross-file token namespace reconciliation
-- Algorithm: loads other session items' entities → builds (type, value) → token map → loads new item's entities → reuses existing tokens for matching (type, value) pairs → generates new non-conflicting [[TYPE:HASH]] tokens for unique entities → rewrites masked_content with token replacements → updates entities and hash_mappings atomically in a transaction
-- Token replacement sorts by old_token length descending to prevent partial match issues
-- New tokens use `rand::thread_rng()` to generate 8-char hex hashes in [[TYPE:HASH]] format
-- Idempotent: running twice produces same result since tokens already match on second pass
-- Added `use rand::Rng` and changed `HashMap` import to `std::collections::{HashMap, HashSet}`
-- Registered command in lib.rs generate_handler![]
-- Files changed: `mirage-vault/src-tauri/src/commands.rs`, `mirage-vault/src-tauri/src/lib.rs`
+## 2026-03-02 - US-006
+- Registered list_sessions and search_sessions MCP tools
+- Files changed:
+  - `mirage-vault/mcp-server/src/core/tools.ts` — new file, `registerTools(server, db)` function registering both tools with zod schemas
+  - `mirage-vault/mcp-server/src/core/server.ts` — updated `createServer()` to accept optional VaultDB, calls `registerTools()` when db provided
+  - `mirage-vault/mcp-server/src/index-stdio.ts` — reads MIRAGE_VAULT_PASSPHRASE and MIRAGE_VAULT_DB_PATH env vars, creates VaultDB and passes to createServer
 - **Learnings for future iterations:**
-  - For token reconciliation, exclude the current item from the session entity query (`si.item_id != ?2`) since the item is already linked via `add_item_to_session`
-  - Register new tokens in `session_map` during iteration so duplicate (type, value) entities within the same item get the same token
-  - Sort token replacements by length descending before string replacement to prevent partial matches (e.g., `[[EMAIL_11]]` before `[[EMAIL_1]]`)
-  - `rand::thread_rng().gen::<[u8; 4]>()` + manual hex formatting avoids needing the `hex` crate
-  - The `extract_hash_from_token` helper already exists in commands.rs for parsing [[TYPE:HASH]] tokens
+  - `server.tool(name, description, zodSchema, handler)` is the McpServer API for registering tools — schema is a plain object of zod types (not z.object())
+  - Tool handlers return `{ content: [{ type: 'text', text: string }] }` — use `as const` on type field for TS satisfaction
+  - `createServer()` now takes optional VaultDB — tools are only registered if db is available, graceful degradation when no passphrase
+  - VaultDB initialization in index files, not in server.ts — keeps server.ts transport-agnostic
 ---
 
-## 2026-03-01 - US-007
-- Added SESSIONS tab to sidebar navigation between BROWSE and SETTINGS
-- Updated `ActiveView` type to `'browse' | 'sessions' | 'settings'` in Sidebar.svelte
-- Added 'sessions' pixel art icon (chat bubble) to PixelIcon.svelte
-- Updated EntityPanel.svelte `activeView` prop type to accept 'sessions'
-- +page.svelte: sessions view shows a centered placeholder with "Sessions" text
-- Existing BROWSE and SETTINGS views unchanged; navigation clears file selection for non-browse views
-- Files changed: `Sidebar.svelte`, `PixelIcon.svelte`, `EntityPanel.svelte`, `+page.svelte`
+## 2026-03-02 - US-007
+- Registered get_session and get_session_item MCP tools with mcp_shared access control and entity type summary
+- Files changed:
+  - `mirage-vault/mcp-server/src/core/tools.ts` — added get_session tool (with entity_summary grouping), get_session_item tool, and buildEntitySummary helper
+  - `mirage-vault/mcp-server/src/core/db.ts` — added `getSessionMcpStatus()` lightweight method for access checks
 - **Learnings for future iterations:**
-  - EntityPanel has its own inline `activeView` type — must update it when adding new views
-  - When navigating away from browse, clear selectedItemId/selectedItem to avoid stale state
-  - New PixelIcon names must be added to the `IconName` union type and a new `{:else if}` SVG block
-- SessionList component: exports `SessionSummary` interface, uses `onselectsession` callback prop
-- ConfirmDialog is rendered inside SessionList (not in +page.svelte) since it's session-scoped
+  - Use a lightweight `getSessionMcpStatus()` DB method for mcp_shared checks in tools that don't need the full session data (avoids loading entries/items/entities)
+  - MCP tool error responses use `isError: true` alongside the content array — distinguishes errors from successful empty results
+  - Entity summary is built at the tool level by grouping `SessionEntity[]` by `entity_type` and counting — keeps DB layer returning raw data
+  - Access control pattern: check session exists → check mcp_shared → proceed with tool logic; consistent across all session-scoped tools
 ---
 
-## 2026-03-01 - US-008
-- Created `SessionList.svelte` component that calls `invoke('list_sessions')` on mount and displays session cards
-- Each card shows name, status badge (active/archived), item count, entry count, and formatted last updated time
-- "New Session" button creates sessions with default name `Session — YYYY-MM-DD HH:MM`
-- Sessions sorted: active first, archived second (both groups by updated_at DESC from backend)
-- Archive/unarchive toggle button per session using lock/unlock icons
-- Delete button with ConfirmDialog confirmation (reused existing component)
-- Archived sessions appear dimmed (opacity: 0.55)
-- Empty state with icon, text, hint, and "New Session" button shown when no sessions exist
-- Clicking a session card calls `onselectsession` callback with session id
-- Integrated into +page.svelte: replaces sessions placeholder, rendered when `activeView === 'sessions'`
-- Removed unused `.sessions-placeholder` CSS from +page.svelte
-- Files changed: `mirage-vault/src/lib/components/SessionList.svelte` (new), `mirage-vault/src/routes/+page.svelte`
+## 2026-03-02 - US-008
+- Registered get_entity_legend and get_masked_item MCP tools
+- Files changed:
+  - `mirage-vault/mcp-server/src/core/tools.ts` — added get_entity_legend tool (session mcp_shared gated, returns grouped token→type legend), get_masked_item tool (relies on VaultDB SQL-level access check)
 - **Learnings for future iterations:**
-  - SessionList owns its own ConfirmDialog for delete — keeps +page.svelte clean
-  - `$derived.by()` is needed for sorting/filtering logic that produces a new array
-  - Card action buttons use `e.stopPropagation()` to prevent card click when clicking archive/delete
-  - The grid uses `minmax(280px, 1fr)` (wider than FileCard's 220px) since session cards have more text content
+  - `get_entity_legend` uses the same session access control pattern as get_session/get_session_item: `getSessionMcpStatus()` → check exists → check mcp_shared
+  - `get_masked_item` doesn't need session-level access control at tool layer — VaultDB.getMaskedItem() handles it via SQL EXISTS/NOT EXISTS pattern (item in mcp_shared session OR not in any session)
+  - All 6 MCP tools now registered: list_sessions, search_sessions, get_session, get_session_item, get_entity_legend, get_masked_item
 ---
 
-## 2026-03-01 - US-009
-- Created `SessionDetail.svelte` with header (back button, inline-editable name, status badge) and scrollable feed area
-- Header uses `chevron-left` PixelIcon for back navigation, inline text input for renaming (blur/enter saves, escape cancels)
-- Feed area shows empty state placeholder: "No entries yet. Add files or paste LLM output to get started."
-- Added `chevron-left` icon to PixelIcon.svelte (mirrored `chevron-right` path)
-- Integrated into `+page.svelte`: `selectedSessionId` state (number | null), set by SessionList's `onselectsession`, cleared by SessionDetail's `onback`
-- Navigating away from sessions clears `selectedSessionId`
-- Files changed: `mirage-vault/src/lib/components/SessionDetail.svelte` (new), `mirage-vault/src/lib/components/PixelIcon.svelte`, `mirage-vault/src/routes/+page.svelte`
+## 2026-03-02 - US-009
+- Registered session MCP resources via ResourceTemplate for `vault://sessions/{session_id}`
+- Files changed:
+  - `mirage-vault/mcp-server/src/core/resources.ts` — new file, `registerResources(server, db)` function with ResourceTemplate for session URIs, list callback returning MCP-shared sessions, read callback with mcp_shared access control and formatted text output
+  - `mirage-vault/mcp-server/src/core/server.ts` — imported and called `registerResources()` in `createServer()` alongside `registerTools()`
 - **Learnings for future iterations:**
-  - `chevron-left` icon was missing — added by mirroring `chevron-right` path coordinates (swap x-offsets around center)
-  - SessionDetail loads data via `invoke('get_session', { sessionId })` returning `SessionDetailData` with entries and items arrays
-  - Inline name editing pattern: click span → show input, blur/enter → save via `invoke('update_session')`, escape → cancel
-  - Clear `selectedSessionId` on sidebar navigation away from sessions to avoid stale state
+  - `ResourceTemplate` imported from `@modelcontextprotocol/sdk/server/mcp.js` — same module as `McpServer`
+  - ResourceTemplate constructor: `new ResourceTemplate(uriTemplate, { list: callback })` — list callback is required (can be undefined) for template resources
+  - Resource read callback for templates receives `(uri: URL, variables: Variables, extra)` — variables is `Record<string, string | string[]>`, parse numbers with `Number()`
+  - Resource read returns `{ contents: [{ uri, mimeType, text }] }` — text/plain MIME type for session content
+  - Resource metadata (description, mimeType) passed as third arg to `server.resource()` before the read callback
+  - `server.resource()` with 4 args: name, ResourceTemplate, metadata, readCallback — metadata is optional but good practice
 ---
 
-## 2026-03-01 - US-010
-- Created `SessionEntryCard.svelte` component with visual distinction between input and output entries
-- Input entries: file PixelIcon, file name (from item) or 'Pasted text', left accent border in `--accent-orange`
-- Output entries: sessions PixelIcon, 'LLM Response' label, left accent border in `--color-grim-blue`
-- Cards show timestamp, truncated preview (~150 chars), and 'Not decoded' badge for output entries without decoded_content
-- Cards are clickable — emit `onselect` callback with entry id (handler is placeholder for US-013)
-- Updated `SessionDetail.svelte` to render `SessionEntryCard` for each entry, sorted by `created_at` ascending
-- Added `itemNameMap` derived value mapping `source_item_id` → item name for entry card labels
-- Empty state preserved when no entries exist
-- Files changed: `mirage-vault/src/lib/components/SessionEntryCard.svelte` (new), `mirage-vault/src/lib/components/SessionDetail.svelte`
+## 2026-03-02 - US-010
+- Implemented Desktop Extension manifest and .mcpb packaging
+- Files changed:
+  - `mirage-vault/mcp-server/manifest.json` — manifest v0.3 with user_config for passphrase (sensitive) and database_path (optional), maps to MIRAGE_VAULT_PASSPHRASE and MIRAGE_VAULT_DB_PATH env vars, all 6 tools declared, node entry point at dist/index-stdio.js
+  - `mirage-vault/mcp-server/.mcpbignore` — excludes src/, test files, .d.ts, tsconfig, typescript, @types from the bundle
+  - `mirage-vault/mcp-server/package.json` — added `package` script: `tsc && npx @anthropic-ai/mcpb pack . dist/mirage-vault.mcpb`
 - **Learnings for future iterations:**
-  - `--color-grim-blue` from tokens.css is a good muted blue for secondary accent (output entries) to contrast with `--accent-orange` (input entries)
-  - `SessionEntry` interface exported from `SessionEntryCard.svelte` can be imported by other components that work with entries
-  - Use `$derived.by()` for item name map construction from session.items array
-  - Sort entries by `created_at` string comparison works since dates are ISO-formatted from the backend
+  - `@anthropic-ai/mcpb` manifest v0.3 format: `server.mcp_config.env` maps `${user_config.field}` template vars to env vars
+  - `user_config` fields: `type: "string"` with `sensitive: true` stores value in OS keychain (good for passphrases)
+  - `npx @anthropic-ai/mcpb validate .` validates manifest against schema — use before pack
+  - `npx @anthropic-ai/mcpb pack . dist/output.mcpb` bundles everything including node_modules — use `.mcpbignore` to exclude devDependencies (typescript, @types)
+  - better-sqlite3 native binary (~25MB) dominates the .mcpb size — expected for native Node modules
+  - dist/ is already in .gitignore so .mcpb artifacts are not committed
 ---
 
-## 2026-03-01 - US-011
-- Added fixed-to-bottom paste input area to `SessionDetail.svelte` with multi-line textarea and submit button
-- Textarea placeholder: "Paste LLM response here to decode..."
-- Submit flow: `add_session_entry` (type 'output') → `decode_session_entry` → `loadSession()` refresh → scroll to bottom
-- Textarea cleared after successful submission; submit button disabled when textarea is empty or submitting
-- Ctrl/Cmd + Enter keyboard shortcut for quick submit
-- Frosted glass background (same `color-mix` + `backdrop-filter: blur` pattern as SearchBar)
-- Feed area has `padding-bottom: 100px` to prevent entries from being hidden behind the input area
-- `.session-detail` gains `position: relative` for the absolute-positioned input area
-- Submit button shows a spinner during processing; uses `chevron-right` PixelIcon when idle
-- Files changed: `mirage-vault/src/lib/components/SessionDetail.svelte`
+## 2026-03-02 - US-011
+- Implemented embedded SSE server entry point at `mirage-vault/mcp-server/src/index-sse.ts`
+- Files changed:
+  - `mirage-vault/mcp-server/src/index-sse.ts` — replaced stub with full HTTP+SSE server on 127.0.0.1:3420, using SSEServerTransport from MCP SDK, per-session transport management, graceful shutdown on SIGTERM/SIGINT
 - **Learnings for future iterations:**
-  - The frosted glass pattern is: `background: color-mix(in srgb, var(--bg-surface) 80%, transparent); backdrop-filter: blur(8px);` — reuse this for any fixed-bottom overlay
-  - For sequential async invoke calls (add → decode → refresh), use plain `await` chaining — no need for Promise.all since they depend on each other
-  - `tick()` before `scrollTop = scrollHeight` ensures the DOM has updated with new entries before scrolling
-  - `border-radius: 0px` for pixel art consistency — applies to textarea, buttons, and all input elements
+  - `SSEServerTransport` constructor takes `(endpoint, res)` — endpoint is the POST URL for messages, res is the SSE stream response
+  - SSE transport pattern: GET /mcp establishes SSE stream, POST /messages?sessionId=<id> sends messages — two endpoints required
+  - Each SSE connection gets its own McpServer+transport pair via `createServer(db)` — VaultDB is shared, server instances are per-connection
+  - Track transports by `transport.sessionId` in a map, clean up on response `close` event
+  - Bind to 127.0.0.1 (not 0.0.0.0) for loopback-only access — security requirement for local MCP servers
+  - Use `console.error()` for logging in MCP servers (stdout may be reserved for protocol in some contexts)
 ---
 
-## 2026-03-01 - US-012
-- Created `VaultPicker.svelte` overlay component: lists vault items not yet in session, click to add
-- Added 'Add Files' button to `SessionDetail.svelte` header that opens vault picker overlay
-- Vault picker filters items by `sessionItemIds` Set derived from session data, shows only `status === 'done'` items
-- Vault item selection flow: `add_item_to_session` → `reconcile_item_tokens` → `get_item` (for masked content) → `add_session_entry` (input type) → refresh session
-- Added drop zone overlay to `SessionDetail.svelte`: translucent overlay with "Drop files to add to session" text, animated pulsing border
-- `dragOver` state passed from `+page.svelte` to `SessionDetail` for native Tauri drag-drop visual feedback
-- Modified `+page.svelte` Tauri drag-drop handler: when in session view (`activeView === 'sessions'` and `selectedSessionId != null`), routes drops through `handleSessionFileDrop` which ingests files via existing pipeline then links each to the session
-- `linkItemToSession` helper: `add_item_to_session` → `reconcile_item_tokens` → `get_item` → `add_session_entry`
-- `SessionDetail.loadSession()` exported for parent to trigger refresh after session file drops
-- `sessionDetailRef` bound via `bind:this` in `+page.svelte` to call `loadSession()` after drop completes
-- Supported file types: .txt, .md, .csv, .json, .pdf (same `ACCEPTED_EXTENSIONS` validation)
-- Files changed: `mirage-vault/src/lib/components/VaultPicker.svelte` (new), `mirage-vault/src/lib/components/SessionDetail.svelte`, `mirage-vault/src/routes/+page.svelte`, `tasks/prd.json`
+## 2026-03-02 - US-012
+- Implemented Tauri sidecar management for the embedded SSE MCP server
+- Files changed:
+  - `mirage-vault/src-tauri/src/commands.rs` — added `McpServerState` struct (child process + passphrase), `McpServerStatus` response type, `find_mcp_script()` helper (env var → dev → production paths), `start_mcp_server_internal()` and `stop_mcp_process()` helpers, three new commands: `start_mcp_server`, `stop_mcp_server`, `get_mcp_server_status`; modified `init_encryption` to store passphrase and auto-start MCP server; modified `clear_encryption_key` to stop MCP server and clear passphrase
+  - `mirage-vault/src-tauri/src/lib.rs` — registered `McpServerState` in `.setup()`, added three new commands to `generate_handler![]`, changed from `.run(context)` to `.build(context).run(callback)` pattern to handle `RunEvent::Exit` for process cleanup
 - **Learnings for future iterations:**
-  - VaultPicker is self-contained — calls `invoke('list_items')` directly and filters by `sessionItemIds` Set
-  - Session linking after file ingestion: use `uploadStates.get(trackingId)?.itemId` to get the created item ID after ingestion completes
-  - `export function` in Svelte 5 instance `<script>` exposes the function on the component instance via `bind:this`
-  - Tauri native drag-drop events are global (webview-level) — route them in `+page.svelte` based on `activeView` context
-  - Drop overlay uses `pointer-events: none` so it doesn't interfere with the underlying drag event handling
-  - The vault picker overlay reuses the center-area overlay pattern: `position: absolute; inset: 0; z-index: 50`
+  - Tauri `State<'_, T>` params are auto-injected — adding them to existing commands doesn't require frontend changes
+  - `env!("CARGO_MANIFEST_DIR")` embeds compile-time path — only suitable for development, need runtime path resolution for production
+  - `std::process::Child::try_wait()` returns `Ok(None)` if process is still running — use for status checks
+  - `.build(context).run(|handle, event|)` replaces `.run(context)` when you need to handle `RunEvent::Exit` for cleanup
+  - `app_handle.try_state::<T>()` returns `Option<State<T>>` — safe for cleanup code where state might not exist
+  - Passphrase stored in `Mutex<Option<String>>` alongside child handle — cleared on vault lock, needed to restart MCP server
+  - Child process stderr piped to allow log capture; stdin/stdout set to null since MCP SSE uses HTTP not stdio
 ---
 
-## 2026-03-01 - US-013
-- Created `SessionEntryPopup.svelte` overlay component for viewing full entry content
-- Input entries: loads full item detail via `invoke('get_item')` using `source_item_id`, toggles between Masked and Original views
-- Output entries: toggles between Raw (with token highlighting) and Decoded views
-- Token highlighting uses regex `\[\[(\w+)[_:](\w+)\]\]` to find tokens in content, with hover tooltips showing original values from session entities
-- Undecoded output entries show a "Decode" button that calls `invoke('decode_session_entry')` and refreshes
-- Copy button copies current display content to clipboard with "Copied!" feedback
-- Dismissible via backdrop click, Escape key, or close button (same pattern as FileViewer)
-- Session entities loaded via `invoke('get_session_entities')` when entry is selected, used for token → original_value mapping
-- Integrated into `SessionDetail.svelte`: clicking a `SessionEntryCard` opens the popup, `selectedEntryId` state tracks which entry is open
-- Files changed: `mirage-vault/src/lib/components/SessionEntryPopup.svelte` (new), `mirage-vault/src/lib/components/SessionDetail.svelte`, `tasks/prd.json`
+## 2026-03-02 - US-013
+- Implemented MCP server status indicator and .mcpb download in vault Settings UI
+- Files changed:
+  - `mirage-vault/src-tauri/src/commands.rs` — added `find_mcpb_file()` helper (env var → dev → production paths) and `export_mcpb(dest_path)` command that copies the .mcpb file to a user-chosen path
+  - `mirage-vault/src-tauri/src/lib.rs` — registered `export_mcpb` in `generate_handler![]`
+  - `mirage-vault/src/lib/components/SettingsScreen.svelte` — added MCP Server section with: status dot (green/gray), "Running on port 3420" / "Stopped" text, Start/Stop button via `invoke('start_mcp_server')`/`invoke('stop_mcp_server')`, "Connect to Claude Desktop" subsection with download button using `@tauri-apps/plugin-dialog` save dialog + `invoke('export_mcpb')`, "Web Services" subsection with copyable URL `http://127.0.0.1:3420/mcp`
 - **Learnings for future iterations:**
-  - `SessionEntryPopup` follows same overlay pattern as FileViewer and VaultPicker: `position: absolute; inset: 0; z-index: 50`
-  - For input entries, use `invoke('get_item')` to get full `ItemDetail` with `masked_content` and `raw_content` for the toggle
-  - Session entities from `get_session_entities` provide the token→original_value map needed for token highlighting in the popup
-  - Token highlighting uses `ContentSegment` type with `isToken` flag and regex-based parsing — simpler than FileViewer's entity-based approach since we only need token→value mapping
-  - The `onrefresh` callback pattern allows the popup to trigger a session data reload after decode, keeping parent state in sync
+  - `@tauri-apps/plugin-dialog` `save()` function returns a file path string or null — combine with a Rust command for actual file operations
+  - `find_mcpb_file()` follows the same env var → dev → production path resolution pattern as `find_mcp_script()` — reuse this pattern for any bundled asset discovery
+  - Settings sections: `.settings-section` with `.section-label` h3 for main sections, `.subsection-label` h4 for nested groups within a section
+  - `$effect(() => { ... })` runs on mount in Svelte 5 — use for initial data fetching like polling MCP status
+  - Pixel art design: use `border-radius: 0px` consistently for all new UI elements to match the sharp pixel aesthetic
+---
+
+## 2026-03-02 - US-014
+- Created README.md for the MCP server package with comprehensive developer documentation
+- Files changed:
+  - `mirage-vault/mcp-server/README.md` — project overview, build instructions, environment variables reference, both transport modes (stdio + SSE), Claude Desktop configuration (extension and manual), web services URL, all 6 MCP tools documented with parameters and example responses, MCP resource URIs, and security section
+- **Learnings for future iterations:**
+  - README covers both connection methods: .mcpb extension (double-click install) and manual claude_desktop_config.json entry
+  - All 6 tools documented: list_sessions, search_sessions, get_session, get_session_item, get_entity_legend, get_masked_item
+  - Security section covers: read-only, masked-only, mcp_shared gate, loopback binding, no original values
 ---

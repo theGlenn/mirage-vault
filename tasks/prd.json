@@ -1,245 +1,254 @@
 {
   "project": "Mirage Vault",
-  "branchName": "ralph/sessions",
-  "description": "Sessions — Cross-File Redaction Workspace. A session layer that groups files and LLM responses together, enabling cross-file entity referencing via a shared token namespace, back-and-forth masked-input/decoded-output workflows, and future MCP access scoping.",
+  "branchName": "ralph/mcp-server",
+  "description": "MCP Server for Mirage Vault — Expose already-masked vault sessions to LLM services (Claude Desktop, claude.ai, Le Chat) via MCP. Dual transport: Desktop Extension (.mcpb) for Claude Desktop, embedded SSE server for web services. Read-only, masked-only. No raw PII leaves the machine.",
   "userStories": [
     {
       "id": "US-001",
-      "title": "Sessions database schema and migrations",
-      "description": "As a developer, I need sessions, session_items, and session_entries tables in SQLite so that sessions persist across app restarts.",
+      "title": "Add mcp_shared column and toggle command",
+      "description": "As a developer, I need a database column and Tauri command to control which sessions are shared via MCP.",
       "acceptanceCriteria": [
-        "New `sessions` table: id INTEGER PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active' (values: 'active' | 'archived'), created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))",
-        "New `session_items` join table: id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL (FK → sessions ON DELETE CASCADE), item_id INTEGER NOT NULL (FK → items ON DELETE CASCADE), added_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(session_id, item_id)",
-        "New `session_entries` table: id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL (FK → sessions ON DELETE CASCADE), entry_type TEXT NOT NULL ('input' | 'output'), source_item_id INTEGER (nullable FK → items ON DELETE SET NULL), raw_content TEXT NOT NULL, decoded_content TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now'))",
-        "Add nullable session_id column to items table via idempotent ALTER TABLE migration (use existing error-catch pattern from db.rs)",
-        "CREATE INDEX on session_items(session_id) and session_items(item_id)",
-        "CREATE INDEX on session_entries(session_id)",
-        "All CREATE TABLE use IF NOT EXISTS for idempotency",
-        "Foreign keys cascade on delete for sessions → session_items and sessions → session_entries",
+        "Idempotent ALTER TABLE migration adds `mcp_shared` INTEGER column to sessions table (default 0, meaning false)",
+        "New Tauri command `toggle_session_mcp_shared(session_id: i64, shared: bool)` that updates the mcp_shared column and updated_at timestamp",
+        "SessionSummary and SessionDetail structs gain `mcp_shared: bool` field, populated from DB queries in list_sessions and get_session",
+        "Command registered in lib.rs generate_handler![]",
         "cargo check passes from src-tauri/"
       ],
       "priority": 1,
       "passes": true,
-      "notes": "Follow the existing idempotent migration pattern in db.rs — ALTER TABLE ADD COLUMN wrapped in match with 'duplicate column name' error catch. New tables go in the execute_batch block. PRAGMA foreign_keys = ON is already set."
+      "notes": "Follow the existing idempotent ALTER TABLE pattern in db.rs — wrap in match with 'duplicate column name' error catch. SQLite uses INTEGER for booleans (0/1). Update the SELECT queries in list_sessions and get_session to include mcp_shared."
     },
     {
       "id": "US-002",
-      "title": "Tauri commands for session CRUD (create, list, get)",
-      "description": "As a developer, I need IPC commands to create, list, and get sessions from the frontend.",
+      "title": "MCP Share toggle in vault UI",
+      "description": "As a user, I want a toggle in the session header to control whether a session is shared via MCP.",
       "acceptanceCriteria": [
-        "create_session(name: String) command that inserts into sessions table and returns the new session id as i64",
-        "list_sessions() command that returns Vec<SessionSummary> with fields: id, name, status, item_count (from COUNT on session_items), entry_count (from COUNT on session_entries), created_at, updated_at — ordered by updated_at DESC",
-        "get_session(session_id: i64) command that returns SessionDetail with: session fields + Vec<SessionEntryOutput> (id, entry_type, source_item_id, raw_content decrypted, decoded_content decrypted if present, created_at) + Vec<SessionItemOutput> (item id, name, file_type, entity_count, added_at)",
-        "SessionSummary, SessionDetail, SessionEntryOutput, SessionItemOutput are Serialize structs defined in commands.rs",
-        "Encrypted fields (raw_content, decoded_content) are decrypted using crypto::decrypt before returning — with fallback to raw string if decryption fails (same pattern as get_item)",
-        "All three commands registered in lib.rs generate_handler![]",
-        "cargo check passes from src-tauri/"
+        "SessionDetail.svelte header shows a toggle switch next to the session name/status area",
+        "Toggle label: 'Share via MCP' with a small icon (use 'link' or add a new 'share' PixelIcon if needed)",
+        "Clicking toggle calls invoke('toggle_session_mcp_shared', { sessionId, shared: newValue }) and refreshes session data",
+        "Toggle reflects current mcp_shared state from session data",
+        "SessionList.svelte session cards show a small MCP indicator icon when mcp_shared is true",
+        "pnpm check passes",
+        "Verify in browser using dev-browser skill"
       ],
       "priority": 2,
       "passes": true,
-      "notes": "Use State<'_, DbState> for DB access. Lock mutex with db.0.lock(). Return Result<T, String> and map errors with .map_err(|e| e.to_string()). The list_sessions query should use LEFT JOIN + GROUP BY to get counts. Look at list_items and get_item in commands.rs for the existing pattern."
+      "notes": "Add the toggle to the SessionDetail header area near the status badge. For SessionList cards, a small icon or badge like 'MCP' in accent color is sufficient. Use the Svelte 5 callback pattern for the toggle state change."
     },
     {
       "id": "US-003",
-      "title": "Tauri commands for session update, archive, and delete",
-      "description": "As a developer, I need IPC commands to rename, archive, and delete sessions.",
+      "title": "MCP server package scaffolding",
+      "description": "As a developer, I need the TypeScript MCP server package structure set up so I can implement tools and transports.",
       "acceptanceCriteria": [
-        "update_session(session_id: i64, name: String) command that updates the session name and updated_at timestamp",
-        "archive_session(session_id: i64) command that sets status to 'archived' and updates updated_at",
-        "unarchive_session(session_id: i64) command that sets status to 'active' and updates updated_at",
-        "delete_session(session_id: i64) command that deletes the session — cascade deletes session_items and session_entries rows, but items table rows remain untouched",
-        "All four commands registered in lib.rs generate_handler![]",
-        "cargo check passes from src-tauri/"
+        "New directory mirage-vault/mcp-server/ with package.json",
+        "Dependencies: @modelcontextprotocol/sdk, better-sqlite3, @types/better-sqlite3",
+        "tsconfig.json configured for Node.js (ESNext module, Node module resolution, strict mode)",
+        "Source files created: src/index-stdio.ts, src/index-sse.ts, src/core/server.ts, src/core/types.ts",
+        "src/core/server.ts creates an MCP Server instance with name 'mirage-vault' and version from package.json",
+        "src/index-stdio.ts connects the server to StdioServerTransport",
+        "Build script in package.json: tsc compiles to dist/",
+        "pnpm install && pnpm build succeeds from mcp-server/",
+        "Running `node dist/index-stdio.js` starts without crashing (exits cleanly if no DB)"
       ],
       "priority": 3,
       "passes": true,
-      "notes": "Simple UPDATE/DELETE statements. The cascade delete is handled by the ON DELETE CASCADE foreign key constraints from US-001. Still good to verify items are NOT deleted when a session is removed."
+      "notes": "Use @modelcontextprotocol/sdk McpServer class and StdioServerTransport. The server.ts should export a function that creates the server (transport-agnostic). Each index file wires up the transport. Keep index-sse.ts as a stub for now — just a placeholder that logs 'SSE transport not yet implemented'."
     },
     {
       "id": "US-004",
-      "title": "Tauri commands for session item management",
-      "description": "As a developer, I need commands to add and remove items from sessions and query a session's entities.",
+      "title": "Crypto compatibility module",
+      "description": "As a developer, I need a TypeScript module that decrypts vault data using the same AES-256-GCM format as the Rust backend.",
       "acceptanceCriteria": [
-        "add_item_to_session(session_id: i64, item_id: i64) command that inserts into session_items and updates sessions.updated_at — returns Ok(()) or error if already linked (UNIQUE constraint)",
-        "remove_item_from_session(session_id: i64, item_id: i64) command that deletes from session_items and updates sessions.updated_at",
-        "get_session_entities(session_id: i64) command that queries all entities across all items joined to the session via session_items, returns Vec<SessionEntityOutput> with fields: entity_type, original_value (decrypted), token — deduplicated by (entity_type, original_value), keeping the first token encountered",
-        "SessionEntityOutput is a Serialize struct in commands.rs",
-        "All three commands registered in lib.rs generate_handler![]",
-        "cargo check passes from src-tauri/"
+        "New file mcp-server/src/core/crypto.ts",
+        "Function deriveKey(passphrase: string): Buffer that returns SHA-256 hash of the passphrase as a 32-byte key",
+        "Function decrypt(key: Buffer, ciphertext: string): string that decodes base64, extracts nonce (first 12 bytes), ciphertext+tag (remaining bytes), and decrypts using AES-256-GCM via Node.js crypto module",
+        "Function decryptSafe(key: Buffer, ciphertext: string): string that returns the raw string if decryption fails (same fallback pattern as the Rust backend)",
+        "Unit test file mcp-server/src/core/crypto.test.ts with test cases for: deriveKey produces correct length, decrypt handles valid ciphertext, decryptSafe returns raw on invalid input",
+        "Tests pass with npx tsx --test src/core/crypto.test.ts"
       ],
       "priority": 4,
       "passes": true,
-      "notes": "For get_session_entities, join session_items → entities, decrypt original_value for each row, then deduplicate in Rust using a HashMap<(entity_type, decrypted_original_value), token>. The UNIQUE constraint on session_items(session_id, item_id) prevents duplicate links."
+      "notes": "The Rust format is: base64(nonce[12] || ciphertext || tag[16]). In Node.js crypto, use createDecipheriv('aes-256-gcm', key, nonce). Set auth tag with decipher.setAuthTag(tag). The tag is the LAST 16 bytes of the decoded buffer, not appended separately. Use Buffer.from(ciphertext, 'base64') to decode."
     },
     {
       "id": "US-005",
-      "title": "Tauri commands for session entries and decode",
-      "description": "As a developer, I need commands to add output entries to a session and decode tokens in them.",
+      "title": "Database connection module",
+      "description": "As a developer, I need a module that connects to the vault SQLite database in read-only mode and provides query helpers.",
       "acceptanceCriteria": [
-        "add_session_entry(session_id: i64, entry_type: String, raw_content: String, source_item_id: Option<i64>) command that encrypts raw_content using crypto::encrypt, inserts into session_entries, updates sessions.updated_at, returns the new entry id",
-        "decode_session_entry(session_id: i64, entry_id: i64) command that: 1) loads all entities across all session items (via session_items join), 2) builds a token → decrypted_original_value map, 3) reads the entry's raw_content and decrypts it, 4) replaces all [[TYPE:HASH]] and [[TYPE_N]] tokens with original values using regex, 5) encrypts the decoded result and stores in decoded_content column, 6) returns the decoded text",
-        "Decoding handles both hash-style tokens ([[EMAIL:a3f2c1b9]]) and counter-style tokens ([[EMAIL_1]]) by matching against the entity map",
-        "Tokens with no match in the session vault are left as-is in the output (partial decode is valid)",
-        "Both commands registered in lib.rs generate_handler![]",
-        "cargo check passes from src-tauri/"
+        "New file mcp-server/src/core/db.ts",
+        "Class VaultDB that takes a database path and encryption key (Buffer) in constructor",
+        "Opens SQLite database via better-sqlite3 in readonly mode",
+        "Method listSessions(mcpSharedOnly: boolean, includeArchived: boolean): returns session summaries with item_count and entry_count",
+        "Method getSession(sessionId: number): returns session detail with entries (raw_content decrypted via decryptSafe) and items",
+        "Method getSessionItem(sessionId: number, itemId: number): returns item masked_content and entity list (token + entity_type only, no original_value)",
+        "Method searchSessions(query: string): searches session names with LIKE, returns same format as listSessions",
+        "Method getEntityLegend(sessionId: number): returns token → entity_type mapping (no original_value)",
+        "Method getMaskedItem(itemId: number): returns item masked_content and entity list for standalone items",
+        "All session queries filter by mcp_shared = 1 when mcpSharedOnly is true",
+        "Database path defaults to platform-appropriate Tauri app data dir if not specified",
+        "Typecheck passes"
       ],
       "priority": 5,
       "passes": true,
-      "notes": "For the decode regex, use something like r'\\[\\[(\\w+)[_:](\\w+)\\]\\]' to match both formats. Build the token map from entities table (token column) to original_value (decrypted). Use regex replace_all with a closure that looks up each match in the map."
+      "notes": "Use better-sqlite3's Database constructor with { readonly: true }. For the default DB path, check process.platform: 'darwin' → ~/Library/Application Support/com.shroudai.vault/vault.db, 'linux' → ~/.local/share/com.shroudai.vault/vault.db. Session entry raw_content needs decryptSafe since it's encrypted. items.masked_content is NOT encrypted. entities.original_value is encrypted but we NEVER expose it — only serve entity_type and token."
     },
     {
       "id": "US-006",
-      "title": "Token namespace reconciliation command",
-      "description": "As a developer, I need a command that reconciles a file's entity tokens with a session's shared namespace when adding the file to a session.",
+      "title": "Register list_sessions and search_sessions MCP tools",
+      "description": "As a user, I want the LLM to discover and search my vault sessions via MCP tools.",
       "acceptanceCriteria": [
-        "reconcile_item_tokens(session_id: i64, item_id: i64) command that: 1) loads all entities from all OTHER items in the session, 2) builds a (entity_type, decrypted_original_value) → existing_token map, 3) loads the new item's entities, 4) for each entity in the new item: if (type, value) exists in map, rewrite its token to match; if not, assign a new token that doesn't conflict with existing session tokens, 5) rebuilds masked_content by replacing old tokens with new tokens, 6) updates item's masked_content and entities in a transaction",
-        "Reconciliation is idempotent — running it twice on the same item produces the same result",
-        "New tokens that don't conflict use the existing [[TYPE:HASH]] format from the masker",
-        "The command updates both the entities table rows and the item's masked_content column",
-        "All changes are wrapped in a single SQL transaction",
-        "Command registered in lib.rs generate_handler![]",
-        "cargo check passes from src-tauri/"
+        "New file mcp-server/src/core/tools.ts that registers all MCP tools on the server",
+        "list_sessions tool registered with optional include_archived boolean parameter",
+        "list_sessions calls VaultDB.listSessions(mcpSharedOnly=true) and returns session summaries as JSON",
+        "search_sessions tool registered with required query string parameter",
+        "search_sessions calls VaultDB.searchSessions(query) and returns matching sessions",
+        "Both tools include a note in the response: 'All sensitive data has been replaced with tokens. Tokens like [[EMAIL:abc123]] represent redacted values.'",
+        "Tool descriptions explain that content is masked/redacted",
+        "Server can be built and run: list_sessions and search_sessions respond correctly via MCP inspector or manual stdio test",
+        "Typecheck passes"
       ],
       "priority": 6,
       "passes": true,
-      "notes": "This is the most complex backend command. The token rewriting in masked_content is a string find-and-replace of old_token → new_token. Be careful about replacement order — replace longer tokens first to avoid partial matches. Use a transaction so the entities and masked_content update atomically."
+      "notes": "Use server.tool() from @modelcontextprotocol/sdk to register tools. Each tool gets a name, description, input schema (zod or JSON Schema), and handler function. The handler receives parsed input and returns { content: [{ type: 'text', text: JSON.stringify(result) }] }. Initialize VaultDB in the server setup using env vars MIRAGE_VAULT_DB_PATH and MIRAGE_VAULT_PASSPHRASE."
     },
     {
       "id": "US-007",
-      "title": "Sessions sidebar navigation tab",
-      "description": "As a user, I want a SESSIONS tab in the sidebar so I can switch between the file browser and session views.",
+      "title": "Register get_session and get_session_item MCP tools",
+      "description": "As a user, I want the LLM to fetch full session content and individual items via MCP.",
       "acceptanceCriteria": [
-        "Sidebar.svelte gains a third nav item 'SESSIONS' between BROWSE and SETTINGS (or after BROWSE)",
-        "ActiveView type updated to 'browse' | 'sessions' | 'settings' in Sidebar.svelte",
-        "Clicking SESSIONS sets activeView to 'sessions'",
-        "SESSIONS nav item uses a PixelIcon consistent with existing sidebar style (use 'chat' or add a new icon if needed — layers, conversation, or similar pixel art icon)",
-        "Active state highlighting works for the new tab (same --accent-orange pattern as BROWSE and SETTINGS)",
-        "+page.svelte: activeView state accepts 'sessions' value, when activeView is 'sessions' the center area shows a placeholder div with text 'Sessions' (to be replaced in next stories)",
-        "Existing BROWSE and SETTINGS views continue to work unchanged",
-        "pnpm check passes",
-        "Verify in browser using dev-browser skill"
+        "get_session tool registered with required session_id number parameter",
+        "get_session calls VaultDB.getSession(sessionId) and returns session metadata, entries (masked), items, and entity type summary",
+        "Entity type summary shows count per type (e.g. '3 EMAIL tokens, 2 PERSON tokens') without original values",
+        "get_session_item tool registered with required session_id and item_id parameters",
+        "get_session_item calls VaultDB.getSessionItem(sessionId, itemId) and returns item masked_content, metadata, and entity list",
+        "Both tools reject requests for sessions where mcp_shared = false with a clear error message",
+        "Both tools return error for invalid session_id or item_id",
+        "Typecheck passes"
       ],
       "priority": 7,
       "passes": true,
-      "notes": "Update the ActiveView type export in Sidebar.svelte. If 'chat' icon doesn't exist in PixelIcon.svelte, add a new pixel art icon (24x24 SVG, fill=currentColor, shape-rendering=crispEdges). Look at the existing Sidebar.svelte pattern for nav items."
+      "notes": "For entity type summary in get_session, group the entity list by entity_type and count. Return something like { entity_summary: { EMAIL: 3, PERSON: 2, AMT: 1 } }. The redaction notice should be included in every response."
     },
     {
       "id": "US-008",
-      "title": "SessionList component with create, archive, and delete",
-      "description": "As a user, I want to see all my sessions in a list so I can open, create, archive, or delete them.",
+      "title": "Register get_entity_legend and get_masked_item MCP tools",
+      "description": "As a user, I want the LLM to understand token types and access standalone vault items.",
       "acceptanceCriteria": [
-        "Create src/lib/components/SessionList.svelte that calls invoke('list_sessions') on mount and displays session cards",
-        "Each session card shows: name, status badge (active/archived), item count, entry count, last updated time (formatted)",
-        "'New Session' button at the top creates a session via invoke('create_session') with default name 'Session — [formatted date]' and refreshes the list",
-        "Sessions sorted by last updated (newest first), active before archived",
-        "Archive/unarchive toggle button per session (calls invoke('archive_session') or invoke('unarchive_session'))",
-        "Delete button per session with ConfirmDialog confirmation (reuse existing component), calls invoke('delete_session')",
-        "Archived sessions appear dimmed/muted",
-        "Empty state shown when no sessions exist with prompt to create one",
-        "Clicking a session card emits onselectsession callback with session id",
-        "SessionList rendered in +page.svelte center area when activeView is 'sessions' and no session is selected",
-        "pnpm check passes",
-        "Verify in browser using dev-browser skill"
+        "get_entity_legend tool registered with required session_id parameter",
+        "get_entity_legend calls VaultDB.getEntityLegend(sessionId) and returns token → entity_type mapping grouped by type",
+        "get_entity_legend never includes original_value in the response",
+        "get_entity_legend rejects requests for sessions where mcp_shared = false",
+        "get_masked_item tool registered with required item_id parameter",
+        "get_masked_item calls VaultDB.getMaskedItem(itemId) and returns masked_content, metadata, and entity list",
+        "get_masked_item only serves items in MCP-shared sessions or items not in any session",
+        "Typecheck passes"
       ],
       "priority": 8,
       "passes": true,
-      "notes": "Follow the FileCard.svelte / FileBrowser.svelte patterns for card styling — dark background, border, rounded corners (0px for pixel art), status badge. Use the Svelte 5 callback props pattern (onselectsession, not createEventDispatcher). Import ConfirmDialog from $lib/components/ConfirmDialog.svelte."
+      "notes": "For get_entity_legend, the response format should be: { legend: { EMAIL: ['[[EMAIL:a1b2c3]]', '[[EMAIL:d4e5f6]]'], PERSON: ['[[PERSON:g7h8i9]]'] } }. For get_masked_item, check if the item's session (via session_items) has mcp_shared = 1, or if the item isn't in any session (LEFT JOIN session_items IS NULL)."
     },
     {
       "id": "US-009",
-      "title": "Session detail feed view — basic structure and header",
-      "description": "As a user, I want to open a session and see its detail view with an editable name, back button, and chronological feed area.",
+      "title": "Register session MCP resources",
+      "description": "As an LLM, I want to access session content via MCP resource URIs.",
       "acceptanceCriteria": [
-        "Create src/lib/components/SessionDetail.svelte that accepts a sessionId prop and loads session data via invoke('get_session', { sessionId })",
-        "Header shows: back button (PixelIcon chevron-left or arrow) that emits onback callback, editable session name (inline text input that calls invoke('update_session') on blur/enter), session status badge",
-        "Main area is a scrollable vertical feed container that will hold entry cards (empty for now with placeholder text 'No entries yet. Add files or paste LLM output to get started.')",
-        "Feed area scrolls independently with overflow-y: auto",
-        "SessionDetail rendered in +page.svelte center area when activeView is 'sessions' and a selectedSessionId is set",
-        "+page.svelte gains selectedSessionId state (number | null), set by SessionList's onselectsession callback, cleared by SessionDetail's onback callback",
-        "All styling uses CSS custom properties from tokens.css",
-        "pnpm check passes",
-        "Verify in browser using dev-browser skill"
+        "New file mcp-server/src/core/resources.ts that registers MCP resources on the server",
+        "Resource template vault://sessions/{session_id} registered via server.resource()",
+        "Reading a session resource returns the full masked session content (same as get_session tool)",
+        "Resource list (vault://sessions) returns all active MCP-shared sessions as resource entries with name and description",
+        "MIME type set to text/plain for session content",
+        "Typecheck passes"
       ],
       "priority": 9,
       "passes": true,
-      "notes": "This sets up the session detail shell. The feed entries, paste input, and drop zone are added in subsequent stories. Keep the component focused on the layout structure: header with back/name/status, scrollable feed body, and a bottom area (placeholder for the paste input). Load session data with invoke('get_session') which returns SessionDetail from US-002."
+      "notes": "Use server.resource() with a URI template. The resource handler receives the parsed URI parameters and returns content. Resource list uses server.resource() with a static URI to list available sessions. Each session becomes a resource entry with uri, name, and description."
     },
     {
       "id": "US-010",
-      "title": "Session feed entry cards (input and output)",
-      "description": "As a user, I want to see input and output entries in the session feed with visual distinction between them.",
+      "title": "Desktop Extension manifest and packaging",
+      "description": "As a developer, I need to package the MCP server as a Claude Desktop Extension (.mcpb) for easy installation.",
       "acceptanceCriteria": [
-        "Create src/lib/components/SessionEntryCard.svelte that accepts an entry object (id, entry_type, raw_content, decoded_content, source_item_id, created_at) and optional item name",
-        "Input entries display: file/document PixelIcon, file name or 'Pasted text' label, timestamp, truncated preview of raw_content (first ~150 chars), styled with left accent border in --accent-orange",
-        "Output entries display: decode/chat PixelIcon, 'LLM Response' label, timestamp, truncated preview of decoded_content (or raw_content if not decoded), styled with left accent border in a complementary color (muted blue or green)",
-        "Cards are clickable — emit onselect callback with entry id",
-        "Output entries that have no decoded_content show a small 'Not decoded' indicator",
-        "SessionDetail.svelte renders SessionEntryCard for each entry from the loaded session data, ordered by created_at ascending (oldest first, newest at bottom)",
-        "pnpm check passes",
-        "Verify in browser using dev-browser skill"
+        "manifest.json in mcp-server/ with required fields: name, version, description, icon",
+        "Manifest declares user input for vault passphrase (type: string, required: true, label: 'Vault Passphrase')",
+        "Manifest declares optional user input for custom database path (type: string, required: false, label: 'Database Path')",
+        "Manifest maps user inputs to environment variables MIRAGE_VAULT_PASSPHRASE and MIRAGE_VAULT_DB_PATH",
+        "Manifest specifies the stdio entry point (dist/index-stdio.js)",
+        "Build script: npx @anthropic-ai/mcpb pack produces a .mcpb file in mcp-server/dist/",
+        "Package script added to package.json: pnpm run package",
+        "The .mcpb file can be opened in Claude Desktop and the extension installs successfully"
       ],
       "priority": 10,
       "passes": true,
-      "notes": "The session data from get_session already includes entries with decrypted content. Just render them as cards in the feed. Input entries use existing accent orange, output entries use a different color for contrast. Keep the card compact — this is a feed, not a file viewer."
+      "notes": "Follow the @anthropic-ai/mcpb documentation. The manifest.json format requires: { name, version, description, icon?, inputs: [{ id, type, label, required, description }], command: { type: 'node', entry: 'dist/index-stdio.js' } }. User inputs are mapped to env vars that the server reads at startup."
     },
     {
       "id": "US-011",
-      "title": "Paste LLM output into session",
-      "description": "As a user, I want a text input at the bottom of the session feed to paste LLM responses for decoding.",
+      "title": "Embedded SSE server entry point",
+      "description": "As a developer, I need the SSE transport entry point so the Tauri app can run the MCP server internally.",
       "acceptanceCriteria": [
-        "SessionDetail.svelte gains a fixed-to-bottom input area with a multi-line textarea and a submit button",
-        "Textarea placeholder: 'Paste LLM response here to decode...'",
-        "Submitting calls invoke('add_session_entry', { sessionId, entryType: 'output', rawContent: text, sourceItemId: null }), then calls invoke('decode_session_entry', { sessionId, entryId: newId })",
-        "After decode, the session data is refreshed and the new decoded entry appears in the feed",
-        "Textarea is cleared after successful submission",
-        "Submit button is disabled when textarea is empty",
-        "Input area has a frosted glass background (backdrop-filter blur + semi-transparent, same pattern as SearchBar)",
-        "Feed area has bottom padding to avoid entries being hidden behind the input area",
-        "pnpm check passes",
-        "Verify in browser using dev-browser skill"
+        "mcp-server/src/index-sse.ts implements an HTTP server on 127.0.0.1:3420",
+        "SSE endpoint at /mcp handles MCP protocol over Server-Sent Events using SSEServerTransport from @modelcontextprotocol/sdk",
+        "Server reads passphrase from MIRAGE_VAULT_PASSPHRASE env var (passed by Tauri app when spawning the process)",
+        "Server binds to loopback only (127.0.0.1, not 0.0.0.0)",
+        "Server logs startup message to stderr: 'MCP SSE server listening on http://127.0.0.1:3420/mcp'",
+        "Server handles graceful shutdown on SIGTERM/SIGINT",
+        "pnpm build produces dist/index-sse.js",
+        "Typecheck passes"
       ],
       "priority": 11,
       "passes": true,
-      "notes": "Follow the SearchBar pattern for the fixed-to-bottom positioning (position: absolute, bottom: 0, parent has position: relative). The submit flow is: add entry → decode entry → refresh session. Use async/await for the sequential invoke calls."
+      "notes": "Use Node.js http module or express for the HTTP server. SSEServerTransport from @modelcontextprotocol/sdk handles the SSE protocol. The Tauri app will spawn this as a sidecar process with the passphrase passed via env var. Port 3420 chosen to avoid conflicts with common dev ports."
     },
     {
       "id": "US-012",
-      "title": "Add files to session — vault picker and drop zone",
-      "description": "As a user, I want to add files to a session by selecting from my vault or dragging new files in.",
+      "title": "Tauri sidecar management for embedded SSE server",
+      "description": "As a user, I want the MCP SSE server to start automatically when I unlock my vault and stop when I close the app.",
       "acceptanceCriteria": [
-        "SessionDetail.svelte has an 'Add Files' button in the header area that opens a vault picker overlay",
-        "Vault picker overlay shows existing vault items not yet in this session (filter out items already linked via session_items), as a simple list with checkboxes or clickable cards",
-        "Selecting an item calls invoke('add_item_to_session', { sessionId, itemId }), then invoke('reconcile_item_tokens', { sessionId, itemId }), creates an input entry via invoke('add_session_entry', { sessionId, entryType: 'input', rawContent: maskedContent, sourceItemId: itemId }), and refreshes session",
-        "The entire session detail view acts as a drop zone — dragging files shows a translucent overlay with 'Drop files to add to session' text",
-        "Dropped files go through the existing upload pipeline (reuse handleFileDrop logic from +page.svelte), then are linked to the current session with reconciliation",
-        "Supported file types: .txt, .md, .csv, .json, .pdf",
-        "pnpm check passes",
-        "Verify in browser using dev-browser skill"
+        "New Tauri command start_mcp_server() that spawns the SSE server as a child process (node dist/index-sse.js) with MIRAGE_VAULT_PASSPHRASE and MIRAGE_VAULT_DB_PATH env vars",
+        "New Tauri command stop_mcp_server() that kills the child process",
+        "New Tauri command get_mcp_server_status() that returns whether the server is running and on which port",
+        "SSE server process is spawned after successful init_encryption (vault unlock)",
+        "SSE server process is killed on clear_encryption_key (vault lock) and on app exit",
+        "All three commands registered in lib.rs generate_handler![]",
+        "cargo check passes from src-tauri/"
       ],
       "priority": 12,
       "passes": true,
-      "notes": "For the vault picker, call invoke('list_items') to get all items, then filter out IDs already in the session. The drop zone overlay pattern is the same as FileBrowser's dragOver state. The upload pipeline is in +page.svelte — either extract the file ingestion functions to a shared module or call them from the parent and pass the resulting item ID down."
+      "notes": "Use std::process::Command to spawn the Node process. Store the Child handle in a Mutex<Option<Child>> managed state. The mcp-server dist/ must be accessible — either bundled as a Tauri resource or referenced by path. Pass the passphrase via the child process environment, not via command line args (security)."
     },
     {
       "id": "US-013",
-      "title": "Entry detail popup with masked/decoded toggle",
-      "description": "As a user, I want to click a feed entry to see its full content in a popup with toggle between masked and decoded views.",
+      "title": "MCP server status indicator and .mcpb download in vault UI",
+      "description": "As a user, I want to see whether the MCP server is running and download the Claude Desktop extension from the vault app.",
       "acceptanceCriteria": [
-        "Create src/lib/components/SessionEntryPopup.svelte that accepts an entry object and session entities",
-        "For input entries: shows full file content with masked/original toggle (reuse highlighting patterns from FileViewer.svelte)",
-        "For output entries: shows raw content (with tokens highlighted) and decoded content (with original values) via a toggle",
-        "Output entries that haven't been decoded show a 'Decode' button that calls invoke('decode_session_entry') and refreshes",
-        "Popup renders as an overlay constrained to the center area (position: absolute, same pattern as FileViewer.svelte)",
-        "Popup has a header with entry type label, timestamp, and close button (PixelIcon close)",
-        "Dismissible via backdrop click, Escape key, or close button",
-        "Copy button to copy the displayed content to clipboard",
-        "SessionDetail.svelte: clicking a SessionEntryCard opens SessionEntryPopup with the selected entry",
+        "Settings view gains an 'MCP Server' section",
+        "Section shows server status: 'Running on port 3420' (green dot) or 'Stopped' (gray dot), refreshed via invoke('get_mcp_server_status')",
+        "Start/Stop button to manually control the SSE server",
+        "'Connect to Claude Desktop' subsection with a download button",
+        "Download button saves the bundled .mcpb file to the user's Downloads folder via Tauri file dialog",
+        "Brief instruction text: 'Double-click the downloaded file to install in Claude Desktop'",
+        "Instruction text for web services: 'Add this URL as an MCP server in claude.ai or Le Chat: http://127.0.0.1:3420/mcp'",
         "pnpm check passes",
         "Verify in browser using dev-browser skill"
       ],
       "priority": 13,
       "passes": true,
-      "notes": "Reuse the overlay pattern from FileViewer.svelte (position: absolute, inset: 0, semi-transparent backdrop). For input entries, load the full item detail via invoke('get_item') using source_item_id. For output entries, the raw_content and decoded_content are already in the session data."
+      "notes": "The .mcpb file should be bundled as a Tauri resource at build time. Use tauri::api::path to locate the bundled resource. The download uses tauri_plugin_dialog for the save dialog. For the status indicator, poll get_mcp_server_status on mount and after start/stop actions."
+    },
+    {
+      "id": "US-014",
+      "title": "README and developer documentation",
+      "description": "As a developer, I need documentation for building, testing, and configuring the MCP server.",
+      "acceptanceCriteria": [
+        "README.md in mcp-server/ with: project overview, build instructions, environment variables reference, available MCP tools and their parameters, example Claude Desktop config snippet, example SSE connection for web services",
+        "Claude Desktop config example shows both stdio (manual) and .mcpb (extension) setup",
+        "Web services config example shows the localhost URL",
+        "All six MCP tools documented with parameter types, descriptions, and example responses",
+        "Security section explaining: read-only access, masked-only content, mcp_shared gate, loopback binding"
+      ],
+      "priority": 14,
+      "passes": true,
+      "notes": "Keep the README focused and practical. Developers should be able to get started in under 5 minutes. Include the JSON snippet for claude_desktop_config.json for manual setup as an alternative to the .mcpb extension."
     }
   ]
 }

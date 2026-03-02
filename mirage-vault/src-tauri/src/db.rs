@@ -85,6 +85,7 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, Box<dyn std::error::Error>
         "ALTER TABLE items ADD COLUMN raw_pdf_bytes BLOB",
         "ALTER TABLE items ADD COLUMN status TEXT NOT NULL DEFAULT 'done'",
         "ALTER TABLE items ADD COLUMN session_id INTEGER",
+        "ALTER TABLE sessions ADD COLUMN mcp_shared INTEGER NOT NULL DEFAULT 0",
     ];
     for sql in &migrations {
         match conn.execute_batch(sql) {

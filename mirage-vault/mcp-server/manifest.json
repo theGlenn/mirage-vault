@@ -1,0 +1,72 @@
+{
+  "manifest_version": "0.3",
+  "name": "mirage-vault",
+  "display_name": "Mirage Vault",
+  "version": "0.1.0",
+  "description": "Privacy layer for LLM interactions — browse your redacted vault sessions with all sensitive data safely masked as tokens.",
+  "author": {
+    "name": "Shroud AI"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index-stdio.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/index-stdio.js"],
+      "env": {
+        "MIRAGE_VAULT_PASSPHRASE": "${user_config.passphrase}",
+        "MIRAGE_VAULT_DB_PATH": "${user_config.database_path}"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "list_sessions",
+      "description": "List all MCP-shared vault sessions with item and entry counts"
+    },
+    {
+      "name": "search_sessions",
+      "description": "Search vault sessions by name"
+    },
+    {
+      "name": "get_session",
+      "description": "Get full masked session content with entries, items, and entity summary"
+    },
+    {
+      "name": "get_session_item",
+      "description": "Get a specific item from a session with masked content and entity list"
+    },
+    {
+      "name": "get_entity_legend",
+      "description": "Get the token-to-entity-type mapping for a session"
+    },
+    {
+      "name": "get_masked_item",
+      "description": "Get a standalone masked vault item by ID"
+    }
+  ],
+  "keywords": ["privacy", "redaction", "pii", "vault", "masking"],
+  "license": "MIT",
+  "compatibility": {
+    "claude_desktop": ">=1.0.0",
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  },
+  "user_config": {
+    "passphrase": {
+      "type": "string",
+      "title": "Vault Passphrase",
+      "description": "The passphrase used to encrypt your vault. Required to decrypt session entries.",
+      "sensitive": true,
+      "required": true
+    },
+    "database_path": {
+      "type": "string",
+      "title": "Database Path",
+      "description": "Path to the vault SQLite database file. Leave empty to use the default location.",
+      "required": false
+    }
+  }
+}

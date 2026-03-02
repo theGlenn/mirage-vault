@@ -6,6 +6,8 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Write};
+use std::sync::Mutex;
+use tauri::Manager;
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
 
@@ -69,11 +71,126 @@ fn extract_hash_from_token(token: &str) -> Option<String> {
     Some(hash.to_string())
 }
 
+// --- MCP Server State ---
+
+pub struct McpServerState {
+    pub child: Mutex<Option<std::process::Child>>,
+    pub passphrase: Mutex<Option<String>>,
+}
+
+#[derive(Serialize)]
+pub struct McpServerStatus {
+    pub running: bool,
+    pub port: Option<u16>,
+}
+
+fn find_mcp_script() -> Result<std::path::PathBuf, String> {
+    // Check environment variable first
+    if let Ok(path) = std::env::var("MIRAGE_MCP_SERVER_SCRIPT") {
+        let p = std::path::PathBuf::from(&path);
+        if p.exists() {
+            return Ok(p);
+        }
+    }
+
+    // Development: relative to CARGO_MANIFEST_DIR (src-tauri/)
+    let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../mcp-server/dist/index-sse.js");
+    if dev_path.exists() {
+        return Ok(dev_path.canonicalize().map_err(|e| e.to_string())?);
+    }
+
+    // Production: next to the executable
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(parent) = exe_path.parent() {
+            let prod_path = parent.join("mcp-server/dist/index-sse.js");
+            if prod_path.exists() {
+                return Ok(prod_path);
+            }
+        }
+    }
+
+    Err("MCP server script not found. Build the mcp-server package first: cd mcp-server && pnpm build".to_string())
+}
+
+fn start_mcp_server_internal(
+    app: &tauri::AppHandle,
+    mcp_state: &McpServerState,
+) -> Result<(), String> {
+    let passphrase = {
+        let pp = mcp_state.passphrase.lock().map_err(|e| e.to_string())?;
+        pp.clone().unwrap_or_default()
+    };
+
+    let mut child_guard = mcp_state.child.lock().map_err(|e| e.to_string())?;
+
+    // Check if already running
+    if let Some(ref mut child) = *child_guard {
+        match child.try_wait() {
+            Ok(None) => return Ok(()), // already running
+            _ => {
+                *child_guard = None;
+            }
+        }
+    }
+
+    let mcp_script = find_mcp_script()?;
+
+    let db_path = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("vault.db");
+
+    let child = std::process::Command::new("node")
+        .arg(&mcp_script)
+        .env("MIRAGE_VAULT_PASSPHRASE", &passphrase)
+        .env(
+            "MIRAGE_VAULT_DB_PATH",
+            db_path.to_str().unwrap_or(""),
+        )
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to start MCP server: {}", e))?;
+
+    *child_guard = Some(child);
+    Ok(())
+}
+
+pub fn stop_mcp_process(mcp_state: &McpServerState) {
+    if let Ok(mut child_guard) = mcp_state.child.lock() {
+        if let Some(ref mut child) = *child_guard {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        *child_guard = None;
+    }
+}
+
 // --- Key Management Commands ---
 
 #[tauri::command]
-pub fn init_encryption(passphrase: String) -> Result<(), String> {
-    crypto::init_with_passphrase(&passphrase)
+pub fn init_encryption(
+    passphrase: String,
+    app: tauri::AppHandle,
+    mcp_state: State<'_, McpServerState>,
+) -> Result<(), String> {
+    crypto::init_with_passphrase(&passphrase)?;
+
+    // Store passphrase for MCP server
+    {
+        let mut pp = mcp_state.passphrase.lock().map_err(|e| e.to_string())?;
+        *pp = Some(passphrase);
+    }
+
+    // Auto-start MCP server (non-fatal if it fails)
+    if let Err(e) = start_mcp_server_internal(&app, &mcp_state) {
+        log::warn!("Failed to auto-start MCP server: {}", e);
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -82,8 +199,108 @@ pub fn is_encryption_initialized() -> bool {
 }
 
 #[tauri::command]
-pub fn clear_encryption_key() {
+pub fn clear_encryption_key(mcp_state: State<'_, McpServerState>) {
+    // Stop MCP server and clear passphrase
+    stop_mcp_process(&mcp_state);
+    if let Ok(mut pp) = mcp_state.passphrase.lock() {
+        *pp = None;
+    }
     crypto::clear_key();
+}
+
+// --- MCP Server Management Commands ---
+
+#[tauri::command]
+pub fn start_mcp_server(
+    app: tauri::AppHandle,
+    mcp_state: State<'_, McpServerState>,
+) -> Result<McpServerStatus, String> {
+    start_mcp_server_internal(&app, &mcp_state)?;
+    Ok(McpServerStatus {
+        running: true,
+        port: Some(3420),
+    })
+}
+
+#[tauri::command]
+pub fn stop_mcp_server(
+    mcp_state: State<'_, McpServerState>,
+) -> Result<(), String> {
+    let mut child_guard = mcp_state.child.lock().map_err(|e| e.to_string())?;
+    if let Some(ref mut child) = *child_guard {
+        child
+            .kill()
+            .map_err(|e| format!("Failed to stop MCP server: {}", e))?;
+        let _ = child.wait();
+    }
+    *child_guard = None;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_mcp_server_status(
+    mcp_state: State<'_, McpServerState>,
+) -> Result<McpServerStatus, String> {
+    let mut child_guard = mcp_state.child.lock().map_err(|e| e.to_string())?;
+
+    if let Some(ref mut child) = *child_guard {
+        match child.try_wait() {
+            Ok(None) => Ok(McpServerStatus {
+                running: true,
+                port: Some(3420),
+            }),
+            _ => {
+                *child_guard = None;
+                Ok(McpServerStatus {
+                    running: false,
+                    port: None,
+                })
+            }
+        }
+    } else {
+        Ok(McpServerStatus {
+            running: false,
+            port: None,
+        })
+    }
+}
+
+// --- MCPB Export ---
+
+fn find_mcpb_file() -> Result<std::path::PathBuf, String> {
+    // Check environment variable first
+    if let Ok(path) = std::env::var("MIRAGE_MCPB_PATH") {
+        let p = std::path::PathBuf::from(&path);
+        if p.exists() {
+            return Ok(p);
+        }
+    }
+
+    // Development: relative to CARGO_MANIFEST_DIR (src-tauri/)
+    let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../mcp-server/dist/mirage-vault.mcpb");
+    if dev_path.exists() {
+        return Ok(dev_path.canonicalize().map_err(|e| e.to_string())?);
+    }
+
+    // Production: next to the executable
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(parent) = exe_path.parent() {
+            let prod_path = parent.join("mirage-vault.mcpb");
+            if prod_path.exists() {
+                return Ok(prod_path);
+            }
+        }
+    }
+
+    Err("MCPB extension file not found. Build it first: cd mcp-server && pnpm run package".to_string())
+}
+
+#[tauri::command]
+pub fn export_mcpb(dest_path: String) -> Result<(), String> {
+    let source = find_mcpb_file()?;
+    std::fs::copy(&source, &dest_path).map_err(|e| format!("Failed to copy MCPB file: {}", e))?;
+    Ok(())
 }
 
 // --- Commands ---
@@ -633,6 +850,7 @@ pub struct SessionSummary {
     pub entry_count: i64,
     pub created_at: String,
     pub updated_at: String,
+    pub mcp_shared: bool,
 }
 
 #[derive(Serialize)]
@@ -661,6 +879,7 @@ pub struct SessionDetail {
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
+    pub mcp_shared: bool,
     pub entries: Vec<SessionEntryOutput>,
     pub items: Vec<SessionItemOutput>,
 }
@@ -685,7 +904,7 @@ pub fn list_sessions(db: State<'_, DbState>) -> Result<Vec<SessionSummary>, Stri
             "SELECT s.id, s.name, s.status,
                     (SELECT COUNT(*) FROM session_items si WHERE si.session_id = s.id) AS item_count,
                     (SELECT COUNT(*) FROM session_entries se WHERE se.session_id = s.id) AS entry_count,
-                    s.created_at, s.updated_at
+                    s.created_at, s.updated_at, s.mcp_shared
              FROM sessions s
              ORDER BY s.updated_at DESC",
         )
@@ -693,6 +912,7 @@ pub fn list_sessions(db: State<'_, DbState>) -> Result<Vec<SessionSummary>, Stri
 
     let rows = stmt
         .query_map([], |row| {
+            let mcp_shared_int: i64 = row.get(7)?;
             Ok(SessionSummary {
                 id: row.get(0)?,
                 name: row.get(1)?,
@@ -701,6 +921,7 @@ pub fn list_sessions(db: State<'_, DbState>) -> Result<Vec<SessionSummary>, Stri
                 entry_count: row.get(4)?,
                 created_at: row.get(5)?,
                 updated_at: row.get(6)?,
+                mcp_shared: mcp_shared_int != 0,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -718,15 +939,17 @@ pub fn get_session(db: State<'_, DbState>, session_id: i64) -> Result<SessionDet
 
     let session = conn
         .query_row(
-            "SELECT id, name, status, created_at, updated_at FROM sessions WHERE id = ?1",
+            "SELECT id, name, status, created_at, updated_at, mcp_shared FROM sessions WHERE id = ?1",
             rusqlite::params![session_id],
             |row| {
+                let mcp_shared_int: i64 = row.get(5)?;
                 Ok(SessionDetail {
                     id: row.get(0)?,
                     name: row.get(1)?,
                     status: row.get(2)?,
                     created_at: row.get(3)?,
                     updated_at: row.get(4)?,
+                    mcp_shared: mcp_shared_int != 0,
                     entries: Vec::new(),
                     items: Vec::new(),
                 })
@@ -825,6 +1048,25 @@ pub fn update_session(db: State<'_, DbState>, session_id: i64, name: String) -> 
         .execute(
             "UPDATE sessions SET name = ?1, updated_at = datetime('now') WHERE id = ?2",
             rusqlite::params![name, session_id],
+        )
+        .map_err(|e| e.to_string())?;
+    if updated == 0 {
+        return Err("Session not found.".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn toggle_session_mcp_shared(
+    db: State<'_, DbState>,
+    session_id: i64,
+    shared: bool,
+) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let updated = conn
+        .execute(
+            "UPDATE sessions SET mcp_shared = ?1, updated_at = datetime('now') WHERE id = ?2",
+            rusqlite::params![shared as i64, session_id],
         )
         .map_err(|e| e.to_string())?;
     if updated == 0 {

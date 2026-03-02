@@ -23,6 +23,10 @@ pub fn run() {
         .setup(|app| {
             let conn = db::init_db(&app.handle())?;
             app.manage(db::DbState(Mutex::new(conn)));
+            app.manage(commands::McpServerState {
+                child: Mutex::new(None),
+                passphrase: Mutex::new(None),
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -47,6 +51,7 @@ pub fn run() {
             commands::list_sessions,
             commands::get_session,
             commands::update_session,
+            commands::toggle_session_mcp_shared,
             commands::archive_session,
             commands::unarchive_session,
             commands::delete_session,
@@ -57,7 +62,19 @@ pub fn run() {
             commands::update_session_entry_content,
             commands::decode_session_entry,
             commands::reconcile_item_tokens,
+            commands::start_mcp_server,
+            commands::stop_mcp_server,
+            commands::get_mcp_server_status,
+            commands::export_mcpb,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Kill MCP server process on app exit
+                if let Some(mcp_state) = app_handle.try_state::<commands::McpServerState>() {
+                    commands::stop_mcp_process(&mcp_state);
+                }
+            }
+        });
 }

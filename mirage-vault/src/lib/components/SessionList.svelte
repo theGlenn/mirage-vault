@@ -8,6 +8,7 @@
     id: number;
     name: string;
     status: string;
+    mcp_shared: boolean;
     item_count: number;
     entry_count: number;
     created_at: string;
@@ -103,6 +104,12 @@
         >
           <div class="session-card-header">
             <span class="session-card-name">{session.name}</span>
+            {#if session.mcp_shared}
+              <span class="mcp-badge" title="Shared via MCP">
+                <PixelIcon name="link" size={12} />
+                MCP
+              </span>
+            {/if}
             {#if session.status === 'archived'}
               <span class="session-status-badge session-status-archived">archived</span>
             {:else}
@@ -302,6 +309,23 @@
   color: var(--text-muted);
   background: rgba(128, 128, 128, 0.12);
   border: 1px solid var(--text-muted);
+}
+
+/* MCP badge */
+.mcp-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: var(--color-grim-blue);
+  background: color-mix(in srgb, var(--color-grim-blue) 12%, transparent);
+  border: 1px solid var(--color-grim-blue);
 }
 
 /* Card meta */

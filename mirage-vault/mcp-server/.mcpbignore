@@ -1,0 +1,12 @@
+src/
+*.test.ts
+*.test.js
+*.d.ts
+*.d.cts
+tsconfig.json
+.gitignore
+.npmrc
+pnpm-lock.yaml
+*.map
+node_modules/typescript/
+node_modules/@types/

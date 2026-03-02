@@ -29,6 +29,7 @@
     id: number;
     name: string;
     status: string;
+    mcp_shared: boolean;
     created_at: string;
     updated_at: string;
     entries: SessionEntryOutput[];
@@ -72,6 +73,7 @@
   let showVaultPicker = $state(false);
   let linkingItem = $state(false);
   let selectedEntryId: number | null = $state(null);
+  let togglingMcp = $state(false);
 
   interface SessionEntityOutput {
     entity_type: string;
@@ -143,6 +145,19 @@
   async function handleEntryPopupRefresh() {
     await loadSession();
     await loadSessionEntities();
+  }
+
+  async function handleToggleMcp() {
+    if (!session || togglingMcp) return;
+    togglingMcp = true;
+    try {
+      await invoke('toggle_session_mcp_shared', { sessionId: session.id, shared: !session.mcp_shared });
+      await loadSession();
+    } catch (err) {
+      console.error('Failed to toggle MCP sharing:', err);
+    } finally {
+      togglingMcp = false;
+    }
   }
 
   interface EntityInput {
@@ -402,6 +417,18 @@
         <span>Add Files</span>
       </button>
 
+      <button
+        class="mcp-toggle-btn"
+        class:mcp-toggle-active={session.mcp_shared}
+        onclick={handleToggleMcp}
+        disabled={togglingMcp}
+        aria-label={session.mcp_shared ? 'Disable MCP sharing' : 'Enable MCP sharing'}
+        title={session.mcp_shared ? 'Shared via MCP — click to disable' : 'Share via MCP'}
+      >
+        <PixelIcon name="link" size={14} />
+        <span>MCP</span>
+      </button>
+
       {#if session.status === 'archived'}
         <span class="status-badge status-archived">archived</span>
       {:else}
@@ -590,6 +617,42 @@
 .add-files-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* MCP toggle */
+.mcp-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 2px solid var(--border);
+  border-radius: 0px;
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-family: 'Geist Pixel', monospace;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: border-color 0.15s, background-color 0.15s, color 0.15s;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.mcp-toggle-btn:hover:not(:disabled) {
+  border-color: var(--color-grim-blue);
+  color: var(--color-grim-blue);
+  background: var(--bg-elevated);
+}
+
+.mcp-toggle-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mcp-toggle-active {
+  border-color: var(--color-grim-blue);
+  color: var(--color-grim-blue);
+  background: color-mix(in srgb, var(--color-grim-blue) 12%, transparent);
 }
 
 /* Status badge */

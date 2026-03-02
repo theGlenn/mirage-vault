@@ -24,7 +24,8 @@
 		| 'shield'
 		| 'eye'
 		| 'zap'
-		| 'sessions';
+		| 'sessions'
+		| 'link';
 
 	// Add colors handling
 	type Props = {
@@ -99,5 +100,7 @@
 		<path d="M4 13h8v6h2v2h-2v2h-2v-8H2v-4h2v2Zm12 6h-2v-2h2v2Zm2-2h-2v-2h2v2Zm2-2h-2v-2h2v2Zm-6-6h8v4h-2v-2h-8V5h-2V3h2V1h2v8Zm-8 2H4V9h2v2Zm2-2H6V7h2v2Zm2-2H8V5h2v2Z" />
 	{:else if name === 'sessions'}
 		<path d="M6 2h12v2H6zM4 4h2v10H4zm14 0h2v10h-2zM6 14h12v2H6zM6 14h2v2H6zM4 16h2v2H4zM2 18h2v2H2zM8 6h8v2H8zM8 10h6v2H8z" />
+	{:else if name === 'link'}
+		<path d="M10 4h4v2h-4zM14 4h2v2h-2zM16 6h2v4h-2zM14 10h2v2h-2zM12 12h2v2h-2zM10 12h-2v-2h2v2zM6 14h2v4H6zM4 14h2v2H4zM8 18h4v2H8z" />
 	{/if}
 </svg>

@@ -1,0 +1,245 @@
+{
+  "project": "Mirage Vault",
+  "branchName": "ralph/sessions",
+  "description": "Sessions — Cross-File Redaction Workspace. A session layer that groups files and LLM responses together, enabling cross-file entity referencing via a shared token namespace, back-and-forth masked-input/decoded-output workflows, and future MCP access scoping.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Sessions database schema and migrations",
+      "description": "As a developer, I need sessions, session_items, and session_entries tables in SQLite so that sessions persist across app restarts.",
+      "acceptanceCriteria": [
+        "New `sessions` table: id INTEGER PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active' (values: 'active' | 'archived'), created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))",
+        "New `session_items` join table: id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL (FK → sessions ON DELETE CASCADE), item_id INTEGER NOT NULL (FK → items ON DELETE CASCADE), added_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(session_id, item_id)",
+        "New `session_entries` table: id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL (FK → sessions ON DELETE CASCADE), entry_type TEXT NOT NULL ('input' | 'output'), source_item_id INTEGER (nullable FK → items ON DELETE SET NULL), raw_content TEXT NOT NULL, decoded_content TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now'))",
+        "Add nullable session_id column to items table via idempotent ALTER TABLE migration (use existing error-catch pattern from db.rs)",
+        "CREATE INDEX on session_items(session_id) and session_items(item_id)",
+        "CREATE INDEX on session_entries(session_id)",
+        "All CREATE TABLE use IF NOT EXISTS for idempotency",
+        "Foreign keys cascade on delete for sessions → session_items and sessions → session_entries",
+        "cargo check passes from src-tauri/"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Follow the existing idempotent migration pattern in db.rs — ALTER TABLE ADD COLUMN wrapped in match with 'duplicate column name' error catch. New tables go in the execute_batch block. PRAGMA foreign_keys = ON is already set."
+    },
+    {
+      "id": "US-002",
+      "title": "Tauri commands for session CRUD (create, list, get)",
+      "description": "As a developer, I need IPC commands to create, list, and get sessions from the frontend.",
+      "acceptanceCriteria": [
+        "create_session(name: String) command that inserts into sessions table and returns the new session id as i64",
+        "list_sessions() command that returns Vec<SessionSummary> with fields: id, name, status, item_count (from COUNT on session_items), entry_count (from COUNT on session_entries), created_at, updated_at — ordered by updated_at DESC",
+        "get_session(session_id: i64) command that returns SessionDetail with: session fields + Vec<SessionEntryOutput> (id, entry_type, source_item_id, raw_content decrypted, decoded_content decrypted if present, created_at) + Vec<SessionItemOutput> (item id, name, file_type, entity_count, added_at)",
+        "SessionSummary, SessionDetail, SessionEntryOutput, SessionItemOutput are Serialize structs defined in commands.rs",
+        "Encrypted fields (raw_content, decoded_content) are decrypted using crypto::decrypt before returning — with fallback to raw string if decryption fails (same pattern as get_item)",
+        "All three commands registered in lib.rs generate_handler![]",
+        "cargo check passes from src-tauri/"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Use State<'_, DbState> for DB access. Lock mutex with db.0.lock(). Return Result<T, String> and map errors with .map_err(|e| e.to_string()). The list_sessions query should use LEFT JOIN + GROUP BY to get counts. Look at list_items and get_item in commands.rs for the existing pattern."
+    },
+    {
+      "id": "US-003",
+      "title": "Tauri commands for session update, archive, and delete",
+      "description": "As a developer, I need IPC commands to rename, archive, and delete sessions.",
+      "acceptanceCriteria": [
+        "update_session(session_id: i64, name: String) command that updates the session name and updated_at timestamp",
+        "archive_session(session_id: i64) command that sets status to 'archived' and updates updated_at",
+        "unarchive_session(session_id: i64) command that sets status to 'active' and updates updated_at",
+        "delete_session(session_id: i64) command that deletes the session — cascade deletes session_items and session_entries rows, but items table rows remain untouched",
+        "All four commands registered in lib.rs generate_handler![]",
+        "cargo check passes from src-tauri/"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Simple UPDATE/DELETE statements. The cascade delete is handled by the ON DELETE CASCADE foreign key constraints from US-001. Still good to verify items are NOT deleted when a session is removed."
+    },
+    {
+      "id": "US-004",
+      "title": "Tauri commands for session item management",
+      "description": "As a developer, I need commands to add and remove items from sessions and query a session's entities.",
+      "acceptanceCriteria": [
+        "add_item_to_session(session_id: i64, item_id: i64) command that inserts into session_items and updates sessions.updated_at — returns Ok(()) or error if already linked (UNIQUE constraint)",
+        "remove_item_from_session(session_id: i64, item_id: i64) command that deletes from session_items and updates sessions.updated_at",
+        "get_session_entities(session_id: i64) command that queries all entities across all items joined to the session via session_items, returns Vec<SessionEntityOutput> with fields: entity_type, original_value (decrypted), token — deduplicated by (entity_type, original_value), keeping the first token encountered",
+        "SessionEntityOutput is a Serialize struct in commands.rs",
+        "All three commands registered in lib.rs generate_handler![]",
+        "cargo check passes from src-tauri/"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "For get_session_entities, join session_items → entities, decrypt original_value for each row, then deduplicate in Rust using a HashMap<(entity_type, decrypted_original_value), token>. The UNIQUE constraint on session_items(session_id, item_id) prevents duplicate links."
+    },
+    {
+      "id": "US-005",
+      "title": "Tauri commands for session entries and decode",
+      "description": "As a developer, I need commands to add output entries to a session and decode tokens in them.",
+      "acceptanceCriteria": [
+        "add_session_entry(session_id: i64, entry_type: String, raw_content: String, source_item_id: Option<i64>) command that encrypts raw_content using crypto::encrypt, inserts into session_entries, updates sessions.updated_at, returns the new entry id",
+        "decode_session_entry(session_id: i64, entry_id: i64) command that: 1) loads all entities across all session items (via session_items join), 2) builds a token → decrypted_original_value map, 3) reads the entry's raw_content and decrypts it, 4) replaces all [[TYPE:HASH]] and [[TYPE_N]] tokens with original values using regex, 5) encrypts the decoded result and stores in decoded_content column, 6) returns the decoded text",
+        "Decoding handles both hash-style tokens ([[EMAIL:a3f2c1b9]]) and counter-style tokens ([[EMAIL_1]]) by matching against the entity map",
+        "Tokens with no match in the session vault are left as-is in the output (partial decode is valid)",
+        "Both commands registered in lib.rs generate_handler![]",
+        "cargo check passes from src-tauri/"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "For the decode regex, use something like r'\\[\\[(\\w+)[_:](\\w+)\\]\\]' to match both formats. Build the token map from entities table (token column) to original_value (decrypted). Use regex replace_all with a closure that looks up each match in the map."
+    },
+    {
+      "id": "US-006",
+      "title": "Token namespace reconciliation command",
+      "description": "As a developer, I need a command that reconciles a file's entity tokens with a session's shared namespace when adding the file to a session.",
+      "acceptanceCriteria": [
+        "reconcile_item_tokens(session_id: i64, item_id: i64) command that: 1) loads all entities from all OTHER items in the session, 2) builds a (entity_type, decrypted_original_value) → existing_token map, 3) loads the new item's entities, 4) for each entity in the new item: if (type, value) exists in map, rewrite its token to match; if not, assign a new token that doesn't conflict with existing session tokens, 5) rebuilds masked_content by replacing old tokens with new tokens, 6) updates item's masked_content and entities in a transaction",
+        "Reconciliation is idempotent — running it twice on the same item produces the same result",
+        "New tokens that don't conflict use the existing [[TYPE:HASH]] format from the masker",
+        "The command updates both the entities table rows and the item's masked_content column",
+        "All changes are wrapped in a single SQL transaction",
+        "Command registered in lib.rs generate_handler![]",
+        "cargo check passes from src-tauri/"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "This is the most complex backend command. The token rewriting in masked_content is a string find-and-replace of old_token → new_token. Be careful about replacement order — replace longer tokens first to avoid partial matches. Use a transaction so the entities and masked_content update atomically."
+    },
+    {
+      "id": "US-007",
+      "title": "Sessions sidebar navigation tab",
+      "description": "As a user, I want a SESSIONS tab in the sidebar so I can switch between the file browser and session views.",
+      "acceptanceCriteria": [
+        "Sidebar.svelte gains a third nav item 'SESSIONS' between BROWSE and SETTINGS (or after BROWSE)",
+        "ActiveView type updated to 'browse' | 'sessions' | 'settings' in Sidebar.svelte",
+        "Clicking SESSIONS sets activeView to 'sessions'",
+        "SESSIONS nav item uses a PixelIcon consistent with existing sidebar style (use 'chat' or add a new icon if needed — layers, conversation, or similar pixel art icon)",
+        "Active state highlighting works for the new tab (same --accent-orange pattern as BROWSE and SETTINGS)",
+        "+page.svelte: activeView state accepts 'sessions' value, when activeView is 'sessions' the center area shows a placeholder div with text 'Sessions' (to be replaced in next stories)",
+        "Existing BROWSE and SETTINGS views continue to work unchanged",
+        "pnpm check passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "Update the ActiveView type export in Sidebar.svelte. If 'chat' icon doesn't exist in PixelIcon.svelte, add a new pixel art icon (24x24 SVG, fill=currentColor, shape-rendering=crispEdges). Look at the existing Sidebar.svelte pattern for nav items."
+    },
+    {
+      "id": "US-008",
+      "title": "SessionList component with create, archive, and delete",
+      "description": "As a user, I want to see all my sessions in a list so I can open, create, archive, or delete them.",
+      "acceptanceCriteria": [
+        "Create src/lib/components/SessionList.svelte that calls invoke('list_sessions') on mount and displays session cards",
+        "Each session card shows: name, status badge (active/archived), item count, entry count, last updated time (formatted)",
+        "'New Session' button at the top creates a session via invoke('create_session') with default name 'Session — [formatted date]' and refreshes the list",
+        "Sessions sorted by last updated (newest first), active before archived",
+        "Archive/unarchive toggle button per session (calls invoke('archive_session') or invoke('unarchive_session'))",
+        "Delete button per session with ConfirmDialog confirmation (reuse existing component), calls invoke('delete_session')",
+        "Archived sessions appear dimmed/muted",
+        "Empty state shown when no sessions exist with prompt to create one",
+        "Clicking a session card emits onselectsession callback with session id",
+        "SessionList rendered in +page.svelte center area when activeView is 'sessions' and no session is selected",
+        "pnpm check passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "Follow the FileCard.svelte / FileBrowser.svelte patterns for card styling — dark background, border, rounded corners (0px for pixel art), status badge. Use the Svelte 5 callback props pattern (onselectsession, not createEventDispatcher). Import ConfirmDialog from $lib/components/ConfirmDialog.svelte."
+    },
+    {
+      "id": "US-009",
+      "title": "Session detail feed view — basic structure and header",
+      "description": "As a user, I want to open a session and see its detail view with an editable name, back button, and chronological feed area.",
+      "acceptanceCriteria": [
+        "Create src/lib/components/SessionDetail.svelte that accepts a sessionId prop and loads session data via invoke('get_session', { sessionId })",
+        "Header shows: back button (PixelIcon chevron-left or arrow) that emits onback callback, editable session name (inline text input that calls invoke('update_session') on blur/enter), session status badge",
+        "Main area is a scrollable vertical feed container that will hold entry cards (empty for now with placeholder text 'No entries yet. Add files or paste LLM output to get started.')",
+        "Feed area scrolls independently with overflow-y: auto",
+        "SessionDetail rendered in +page.svelte center area when activeView is 'sessions' and a selectedSessionId is set",
+        "+page.svelte gains selectedSessionId state (number | null), set by SessionList's onselectsession callback, cleared by SessionDetail's onback callback",
+        "All styling uses CSS custom properties from tokens.css",
+        "pnpm check passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "This sets up the session detail shell. The feed entries, paste input, and drop zone are added in subsequent stories. Keep the component focused on the layout structure: header with back/name/status, scrollable feed body, and a bottom area (placeholder for the paste input). Load session data with invoke('get_session') which returns SessionDetail from US-002."
+    },
+    {
+      "id": "US-010",
+      "title": "Session feed entry cards (input and output)",
+      "description": "As a user, I want to see input and output entries in the session feed with visual distinction between them.",
+      "acceptanceCriteria": [
+        "Create src/lib/components/SessionEntryCard.svelte that accepts an entry object (id, entry_type, raw_content, decoded_content, source_item_id, created_at) and optional item name",
+        "Input entries display: file/document PixelIcon, file name or 'Pasted text' label, timestamp, truncated preview of raw_content (first ~150 chars), styled with left accent border in --accent-orange",
+        "Output entries display: decode/chat PixelIcon, 'LLM Response' label, timestamp, truncated preview of decoded_content (or raw_content if not decoded), styled with left accent border in a complementary color (muted blue or green)",
+        "Cards are clickable — emit onselect callback with entry id",
+        "Output entries that have no decoded_content show a small 'Not decoded' indicator",
+        "SessionDetail.svelte renders SessionEntryCard for each entry from the loaded session data, ordered by created_at ascending (oldest first, newest at bottom)",
+        "pnpm check passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "The session data from get_session already includes entries with decrypted content. Just render them as cards in the feed. Input entries use existing accent orange, output entries use a different color for contrast. Keep the card compact — this is a feed, not a file viewer."
+    },
+    {
+      "id": "US-011",
+      "title": "Paste LLM output into session",
+      "description": "As a user, I want a text input at the bottom of the session feed to paste LLM responses for decoding.",
+      "acceptanceCriteria": [
+        "SessionDetail.svelte gains a fixed-to-bottom input area with a multi-line textarea and a submit button",
+        "Textarea placeholder: 'Paste LLM response here to decode...'",
+        "Submitting calls invoke('add_session_entry', { sessionId, entryType: 'output', rawContent: text, sourceItemId: null }), then calls invoke('decode_session_entry', { sessionId, entryId: newId })",
+        "After decode, the session data is refreshed and the new decoded entry appears in the feed",
+        "Textarea is cleared after successful submission",
+        "Submit button is disabled when textarea is empty",
+        "Input area has a frosted glass background (backdrop-filter blur + semi-transparent, same pattern as SearchBar)",
+        "Feed area has bottom padding to avoid entries being hidden behind the input area",
+        "pnpm check passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": "Follow the SearchBar pattern for the fixed-to-bottom positioning (position: absolute, bottom: 0, parent has position: relative). The submit flow is: add entry → decode entry → refresh session. Use async/await for the sequential invoke calls."
+    },
+    {
+      "id": "US-012",
+      "title": "Add files to session — vault picker and drop zone",
+      "description": "As a user, I want to add files to a session by selecting from my vault or dragging new files in.",
+      "acceptanceCriteria": [
+        "SessionDetail.svelte has an 'Add Files' button in the header area that opens a vault picker overlay",
+        "Vault picker overlay shows existing vault items not yet in this session (filter out items already linked via session_items), as a simple list with checkboxes or clickable cards",
+        "Selecting an item calls invoke('add_item_to_session', { sessionId, itemId }), then invoke('reconcile_item_tokens', { sessionId, itemId }), creates an input entry via invoke('add_session_entry', { sessionId, entryType: 'input', rawContent: maskedContent, sourceItemId: itemId }), and refreshes session",
+        "The entire session detail view acts as a drop zone — dragging files shows a translucent overlay with 'Drop files to add to session' text",
+        "Dropped files go through the existing upload pipeline (reuse handleFileDrop logic from +page.svelte), then are linked to the current session with reconciliation",
+        "Supported file types: .txt, .md, .csv, .json, .pdf",
+        "pnpm check passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": "For the vault picker, call invoke('list_items') to get all items, then filter out IDs already in the session. The drop zone overlay pattern is the same as FileBrowser's dragOver state. The upload pipeline is in +page.svelte — either extract the file ingestion functions to a shared module or call them from the parent and pass the resulting item ID down."
+    },
+    {
+      "id": "US-013",
+      "title": "Entry detail popup with masked/decoded toggle",
+      "description": "As a user, I want to click a feed entry to see its full content in a popup with toggle between masked and decoded views.",
+      "acceptanceCriteria": [
+        "Create src/lib/components/SessionEntryPopup.svelte that accepts an entry object and session entities",
+        "For input entries: shows full file content with masked/original toggle (reuse highlighting patterns from FileViewer.svelte)",
+        "For output entries: shows raw content (with tokens highlighted) and decoded content (with original values) via a toggle",
+        "Output entries that haven't been decoded show a 'Decode' button that calls invoke('decode_session_entry') and refreshes",
+        "Popup renders as an overlay constrained to the center area (position: absolute, same pattern as FileViewer.svelte)",
+        "Popup has a header with entry type label, timestamp, and close button (PixelIcon close)",
+        "Dismissible via backdrop click, Escape key, or close button",
+        "Copy button to copy the displayed content to clipboard",
+        "SessionDetail.svelte: clicking a SessionEntryCard opens SessionEntryPopup with the selected entry",
+        "pnpm check passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 13,
+      "passes": true,
+      "notes": "Reuse the overlay pattern from FileViewer.svelte (position: absolute, inset: 0, semi-transparent backdrop). For input entries, load the full item detail via invoke('get_item') using source_item_id. For output entries, the raw_content and decoded_content are already in the session data."
+    }
+  ]
+}
