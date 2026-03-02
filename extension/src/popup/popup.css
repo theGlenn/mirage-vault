@@ -1,12 +1,51 @@
+/* Mirage Shroud Extension — Design Tokens (aligned with Vault) */
+
+@font-face {
+  font-family: 'Geist';
+  src: url('./fonts/Geist-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('./fonts/GeistMono-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Pixel';
+  src: url('./fonts/GeistPixel-Square.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
-  color-scheme: light;
-  --bg: #f1efe7;
-  --panel: #fffaf0;
-  --ink: #1f1c18;
-  --muted: #6a6257;
-  --accent: #0f766e;
-  --accent-off: #b9b2a5;
-  --ring: rgba(15, 118, 110, 0.2);
+  color-scheme: dark;
+
+  /* Backgrounds */
+  --bg-primary: rgb(24, 24, 27);
+  --bg-secondary: rgb(28, 28, 31);
+  --bg-surface: rgb(34, 34, 37);
+  --bg-elevated: rgb(42, 42, 46);
+
+  /* Accents */
+  --color-orange: #E8751A;
+  --color-light-orange: rgb(255, 130, 5);
+  --color-green: rgb(118, 242, 34);
+
+  /* Text */
+  --text-primary: #F6F6F6;
+  --text-secondary: #999999;
+  --text-muted: #666666;
+
+  /* Borders */
+  --border: #333336;
+  --border-accent: rgb(255, 130, 5);
 }
 
 * {
@@ -16,50 +55,61 @@
 body {
   margin: 0;
   width: 320px;
-  background:
-    radial-gradient(circle at 100% 0%, rgba(15, 118, 110, 0.15), transparent 55%),
-    radial-gradient(circle at 0% 100%, rgba(194, 120, 3, 0.12), transparent 50%),
-    var(--bg);
-  color: var(--ink);
-  font-family: Georgia, "Times New Roman", serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Geist', sans-serif;
+  font-size: 13px;
 }
 
 .popup {
-  padding: 14px;
+  padding: 16px;
 }
 
+/* ─── Brand Header ─── */
+
 .brand {
-  margin-bottom: 10px;
+  margin-bottom: 14px;
 }
 
 .eyebrow {
   margin: 0 0 4px;
-  color: var(--muted);
-  font-size: 11px;
-  letter-spacing: 0.12em;
+  color: var(--text-muted);
+  font-family: 'Geist Pixel', monospace;
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .brand h1 {
   margin: 0;
-  font-size: 22px;
-  line-height: 1.1;
+  font-family: 'Geist Pixel', monospace;
+  font-size: 14px;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-primary);
 }
 
+/* ─── Card ─── */
+
 .card {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 250, 240, 0.9));
-  border: 1px solid rgba(31, 28, 24, 0.08);
-  border-radius: 14px;
-  padding: 12px;
-  box-shadow: 0 8px 24px rgba(31, 28, 24, 0.08);
+  background: var(--bg-surface);
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  transition: border-color 0.15s;
 }
+
+/* ─── Toggle Row ─── */
 
 .toggle-row {
   display: grid;
   grid-template-columns: 1fr auto auto;
   align-items: center;
   gap: 10px;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
 }
 
 .toggle-row input {
@@ -71,11 +121,13 @@ body {
 
 .slider {
   position: relative;
-  width: 44px;
-  height: 24px;
-  border-radius: 999px;
-  background: var(--accent-off);
-  transition: background-color 120ms ease;
+  width: 40px;
+  height: 22px;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  border: 2px solid var(--border);
+  transition: background-color 0.15s, border-color 0.15s;
+  cursor: pointer;
 }
 
 .slider::after {
@@ -83,47 +135,63 @@ body {
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: white;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
-  transition: transform 120ms ease;
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--text-muted);
+  transition: transform 0.15s, background-color 0.15s;
 }
 
 .toggle-row input:checked + .slider {
-  background: var(--accent);
+  background: var(--color-orange);
+  border-color: var(--color-orange);
 }
 
 .toggle-row input:checked + .slider::after {
-  transform: translateX(20px);
+  transform: translateX(18px);
+  background: #fff;
 }
 
 .toggle-row input:focus-visible + .slider {
-  box-shadow: 0 0 0 4px var(--ring);
+  box-shadow: 0 0 0 3px rgba(232, 117, 26, 0.3);
 }
+
+.toggle-row input:disabled + .slider {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ─── Stat Row ─── */
 
 .stat {
   margin-top: 12px;
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  padding-top: 10px;
-  border-top: 1px solid rgba(31, 28, 24, 0.08);
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
 }
 
 .stat-label {
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .stat strong {
-  font-size: 20px;
+  font-family: 'Geist Mono', monospace;
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--color-orange);
 }
 
+/* ─── Status Text ─── */
+
 .status {
-  margin: 10px 0 0;
-  font-size: 12px;
-  color: var(--muted);
+  margin: 12px 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
   min-height: 1.2em;
+  letter-spacing: 0.02em;
 }

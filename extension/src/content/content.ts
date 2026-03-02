@@ -65,13 +65,13 @@ function ensureStyle() {
       position: fixed;
       z-index: 2147483646;
       max-width: 420px;
-      padding: 6px 8px;
-      border-radius: 10px;
-      border: 1px solid rgba(15,118,110,0.25);
-      background: rgba(255,250,240,0.97);
-      color: #1f1c18;
-      font: 12px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
-      box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 2px solid rgba(232,117,26,0.4);
+      background: rgba(34,34,37,0.96);
+      color: #F6F6F6;
+      font: 11px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
       pointer-events: none;
       opacity: 0;
       transform: translateY(-4px);
@@ -79,14 +79,15 @@ function ensureStyle() {
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      letter-spacing: 0.02em;
     }
     #${CUE_ID}[data-show="true"] {
       opacity: 1;
       transform: translateY(0);
     }
     [data-mirage-shroud-flagged="true"] {
-      box-shadow: 0 0 0 2px rgba(15,118,110,0.2) inset !important;
-      border-radius: 10px;
+      box-shadow: 0 0 0 2px rgba(232,117,26,0.25) inset !important;
+      border-radius: 8px;
     }
   `;
   document.documentElement.appendChild(style);

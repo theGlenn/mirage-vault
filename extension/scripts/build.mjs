@@ -32,10 +32,12 @@ const buildOptions = {
 
 async function copyStatics() {
   await mkdir(distDir, { recursive: true });
+  await mkdir(path.join(distDir, "fonts"), { recursive: true });
   await Promise.all([
     cp(path.join(rootDir, "src", "manifest.json"), path.join(distDir, "manifest.json")),
     cp(path.join(rootDir, "src", "popup", "popup.html"), path.join(distDir, "popup.html")),
-    cp(path.join(rootDir, "src", "popup", "popup.css"), path.join(distDir, "popup.css"))
+    cp(path.join(rootDir, "src", "popup", "popup.css"), path.join(distDir, "popup.css")),
+    cp(path.join(rootDir, "src", "fonts"), path.join(distDir, "fonts"), { recursive: true })
   ]);
 }
 
