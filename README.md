@@ -7,20 +7,28 @@
 <h3 align="center">Privacy-Focused Vault for LLM Interactions</h3>
 
 <p align="center">
-  Local LLM-powered detection and masking for PDFs and prompts
+  Mask sensitive data locally before it reaches any LLM. Detect PII with embedded AI.
 </p>
 
 <p align="center">
   <a href="https://worldwide-hackathon.mistral.ai/">🚀 Mistral Worldwide Hackathon 2025 Submission</a>
 </p>
 
+<p align="center">
+  <img src="./assets/app.gif" alt="Vault App" width="380"/>
+  &nbsp;&nbsp;
+  <img src="./assets/mcp.gif" alt="MCP Integration" width="380"/>
+</p>
+
 ---
 
 ## Overview
 
-**Mistral Mirage** is a **privacy-focused vault** that protects your sensitive information when interacting with cloud LLMs. Using **local LLM models**, it detects and masks PII (Personally Identifiable Information) in both **PDFs and prompts**, ensuring your data never leaves your machine unmasked.
+**Mistral Mirage** is a **privacy-focused vault** that masks sensitive data locally before it reaches any LLM. It uses **embedded AI** — **Ministral 3 1B** running locally with **Xybrid** — to detect and redact PII (Personally Identifiable Information) in both **PDFs and prompts**, ensuring your data never leaves your machine unmasked.
 
-Built for the **Mistral Worldwide Hackathon 2025**, Mistral Mirage combines the power of **Ministral 3B** (running locally via Ollama) with robust encryption to provide a secure, private environment for processing sensitive documents and LLM interactions.
+Connect to any model via **MCP (Model Context Protocol)** — your data never leaves unprotected.
+
+Built for the **Mistral Worldwide Hackathon 2025**.
 
 ## The Problem
 
@@ -38,7 +46,7 @@ Every interaction with cloud LLMs exposes sensitive data:
 ```
 User input:    "Email Jane Doe at jane@acme.com about the $50,000 contract"
                ↓
-Local LLM:     Detects entities using Ministral 3B
+Local LLM:     Detects entities using Ministral 3 1B (Xybrid)
                ↓
 Masked:        "Email [[PERSON_1]] at [[EMAIL_1]] about the [[AMT_1]] contract"
                ↓
@@ -77,14 +85,19 @@ mirage-shroud-mvp/
 
 ### 🏛️ Privacy-Focused Vault (`mirage-vault/`)
 
-A **privacy-first** Tauri v2 desktop application that uses **local LLM models** to detect and mask sensitive entities in your documents and prompts. All processing happens on your machine—no data ever leaves your device unmasked.
+<p align="center">
+  <img src="./assets/app.gif" alt="Mistral Mirage Vault App Demo" width="700"/>
+</p>
+
+A **privacy-first** Tauri v2 desktop application that uses **Ministral 3 1B** running locally with **Xybrid** to detect and mask sensitive entities in your documents and prompts. All processing happens on your machine—no data ever leaves your device unmasked.
 
 **Core Capabilities:**
-- 🔒 **Local LLM-Powered Detection**: Uses **Ministral 3B** via Ollama for intelligent entity detection
+- 🔒 **Embedded AI Detection**: Uses **Ministral 3 1B** running locally via **Xybrid** for intelligent entity detection
 - 📄 **PDF & Document Processing**: Ingest and redact sensitive PDFs, text files, and documents
 - 💬 **Prompt Masking**: Process LLM prompts to remove PII before sending to cloud providers
 - 🛡️ **Encrypted Storage**: AES-256-GCM encryption for all vault contents
 - 🔄 **Reversible Masking**: Restore original values in LLM responses
+- 🔗 **MCP Integration**: Connect to any model via MCP—your data never leaves unprotected
 
 **Features:**
 - Drag-and-drop file ingestion (.txt, .md, .csv, .json, .pdf)
@@ -104,10 +117,7 @@ A **privacy-first** Tauri v2 desktop application that uses **local LLM models** 
 
 **Quick Start:**
 ```bash
-# 1. Install Ollama and pull Ministral 3B
-ollama run ministral:3b
-
-# 2. Start the Vault app
+# 1. Start the Vault app (Ministral 3 1B runs embedded via Xybrid)
 cd mirage-vault
 pnpm install
 pnpm tauri dev      # Launch development window
@@ -118,7 +128,7 @@ pnpm tauri dev      # Launch development window
 | Concept | Description |
 |---------|-------------|
 | **Privacy Vault** | Secure, encrypted storage for sensitive documents with local-only processing |
-| **Local LLM Detection** | Uses Ministral 3B via Ollama—no cloud AI needed for entity detection |
+| **Local LLM Detection** | Uses Ministral 3 1B via Xybrid—no cloud AI needed for entity detection |
 | **Token Format** | `[[TYPE_N]]` (e.g., `[[EMAIL_1]]`, `[[PERSON_2]]`) |
 | **Entity Types** | `EMAIL`, `PHONE`, `AMT`, `ORG`, `PERSON` |
 | **Masking Strategies** | Token redaction (current), structure-preserving substitution (planned) |
@@ -130,9 +140,14 @@ pnpm tauri dev      # Launch development window
 
 Mistral Mirage is built on a **privacy-first architecture** where all AI processing happens locally:
 
-- **Ministral 3B via Ollama**: Local inference for entity detection—no API calls, no data leaks
+- **Ministral 3 1B via Xybrid**: Embedded local inference for entity detection—no external services, no data leaks
 - **Hybrid Detection**: Fast regex pass + LLM refinement for comprehensive PII detection
 - **PDF Text Extraction**: Local processing of PDF documents with sensitive content masking
+- **MCP (Model Context Protocol)**: Connect to any model via MCP—your data never leaves unprotected
+
+<p align="center">
+  <img src="./assets/mcp.gif" alt="MCP Integration Demo" width="700"/>
+</p>
 
 ### Research-Driven Design
 
@@ -144,42 +159,36 @@ Built on deep technical research documented in [RESEARCH.md](RESEARCH.md):
 
 ### Security Invariants
 
-1. ✅ **No external API calls**—all detection runs locally via Ollama
+1. ✅ **No external API calls**—all detection runs locally via Xybrid
 2. ✅ **Original values exist only in encrypted local storage** (vault)
 3. ✅ **Vault mappings never leave** the user's machine
 4. ✅ **No telemetry, no analytics, no cloud sync**
 
-### LLM-Assisted Detection with Ministral 3B
+### LLM-Assisted Detection with Ministral 3 1B
 
-The Vault integrates with **Ollama** to run **Ministral 3B** locally for enhanced entity detection:
+The Vault uses **Ministral 3 1B** running locally with **Xybrid** for enhanced entity detection:
 
 1. **Fast Pass**: Regex + compromise.js catch obvious entities
-2. **LLM Refinement**: Ministral 3B verifies detected entities and identifies additional PII in context
+2. **LLM Refinement**: Ministral 3 1B verifies detected entities and identifies additional PII in context
 3. **Merged Results**: Combined entity list with higher recall and precision
 
-This hybrid approach runs entirely locally—**no data leaves your machine**. Ministral 3B provides an optimal balance of speed (~100ms inference) and accuracy for NER-style tasks.
-
-```bash
-# Start Ollama with Ministral 3B
-ollama run ministral:3b
-```
+This hybrid approach runs entirely locally—**no data leaves your machine**. Ministral 3 1B provides an optimal balance of speed and accuracy for NER-style tasks, with Xybrid handling embedded inference without requiring external services.
 
 ## Roadmap
 
 ### Phase 1: Privacy Vault + Local LLM Detection ✅
 - [x] Core vault application with file processing
 - [x] Token-based redaction engine
-- [x] Local LLM integration (Ollama)
+- [x] Local LLM integration (Ministral 3 1B via Xybrid)
 - [ ] PDF support with text extraction
 - [ ] Encryption at rest (AES-256-GCM)
 - [ ] Structure-preserving substitution
 
-### Phase 2: Vault Integrations
-- [ ] MCP server integration
+### Phase 2: MCP & Vault Integrations ✅
+- [x] MCP server integration—connect to any model, data never leaves unprotected
 - [ ] Document attachment from vault to chats
 
 ### Phase 3: Advanced Features
-- [ ] Model Context Protocol (MCP) server for LLM clients
 - [ ] Direct vault access from Claude Desktop, Cursor, etc.
 - [ ] Batch PDF processing
 
@@ -191,10 +200,10 @@ This project was created for the **Mistral Worldwide Hackathon 2025**—a global
 
 ### Hackathon Goals
 
-- 🎯 Demonstrate practical privacy-preserving LLM interaction
-- 🎯 Showcase local LLM-powered entity detection (Ministral 3B)
+- 🎯 Mask sensitive data locally before it reaches any LLM—detect PII with embedded AI
+- 🎯 Ministral 3 1B running locally with Xybrid for private, on-device entity detection
+- 🎯 Connect to any model via MCP—your data never leaves unprotected
 - 🎯 Build a secure vault for PDF and prompt redaction
-- 🎯 Advance research in structure-preserving data masking
 
 ## Contributing
 
