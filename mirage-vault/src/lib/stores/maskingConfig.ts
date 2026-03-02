@@ -3,7 +3,7 @@ import { writable } from 'svelte/store';
 /**
  * Masking Strategy Types
  */
-export type MaskingStrategy = 'nlp' | 'ollama';
+export type MaskingStrategy = 'nlp' | 'ollama' | 'xybrid';
 
 export interface StrategyConfig {
   /** Primary masking strategy */
@@ -31,6 +31,13 @@ export interface StrategyConfig {
     /** Use regex for pattern-based detection */
     useRegex: boolean;
   };
+
+  /** Xybrid embedded LLM settings (only used when strategy is 'xybrid') */
+  xybrid: {
+    enabled: boolean;
+    /** Use JSON format for structured output vs simple format */
+    useJsonFormat: boolean;
+  };
 }
 
 const DEFAULT_CONFIG: StrategyConfig = {
@@ -50,6 +57,11 @@ const DEFAULT_CONFIG: StrategyConfig = {
     useCompromise: true,
     useRegex: true,
   },
+
+  xybrid: {
+    enabled: false,
+    useJsonFormat: false,
+  },
 };
 
 // Load from localStorage if available
@@ -68,6 +80,7 @@ function loadConfig(): StrategyConfig {
         ...parsed,
         ollama: { ...DEFAULT_CONFIG.ollama, ...parsed.ollama },
         nlp: { ...DEFAULT_CONFIG.nlp, ...parsed.nlp },
+        xybrid: { ...DEFAULT_CONFIG.xybrid, ...parsed.xybrid },
       };
     }
   } catch {
@@ -162,7 +175,7 @@ export function getEffectiveStrategy(config: StrategyConfig): {
 } {
   return {
     primary: config.strategy,
-    useLlm: config.strategy === 'ollama' || config.useLlmRefinement,
+    useLlm: config.strategy === 'ollama' || config.strategy === 'xybrid' || config.useLlmRefinement,
   };
 }
 

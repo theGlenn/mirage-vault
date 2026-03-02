@@ -1,8 +1,9 @@
 mod commands;
 mod crypto;
 mod db;
+mod xybrid;
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
 #[tauri::command]
@@ -27,6 +28,12 @@ pub fn run() {
                 child: Mutex::new(None),
                 passphrase: Mutex::new(None),
             });
+
+            // Xybrid embedded LLM state
+            let llm_state: xybrid::state::SharedXybridLlmState =
+                Arc::new(Mutex::new(xybrid::state::XybridLlmState::default()));
+            app.manage(llm_state);
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -66,6 +73,12 @@ pub fn run() {
             commands::stop_mcp_server,
             commands::get_mcp_server_status,
             commands::export_mcpb,
+            // Xybrid embedded LLM commands
+            xybrid::commands::xybrid_is_ready,
+            xybrid::commands::xybrid_check_model,
+            xybrid::commands::xybrid_download_model,
+            xybrid::commands::xybrid_load_model,
+            xybrid::commands::xybrid_generate,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

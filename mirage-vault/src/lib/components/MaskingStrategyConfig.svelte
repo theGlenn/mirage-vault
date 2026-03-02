@@ -22,6 +22,10 @@
       useCompromise: true,
       useRegex: true,
     },
+    xybrid: {
+      enabled: false,
+      useJsonFormat: false,
+    },
   });
   
   let isAvailable = $state(false);

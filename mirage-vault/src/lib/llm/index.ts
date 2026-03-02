@@ -40,6 +40,12 @@ export {
 } from './ollama';
 
 export {
+  // Xybrid embedded LLM client
+  xybridClient,
+  XybridClient,
+} from './xybrid';
+
+export {
   // Hash-based masking (new approach)
   maskWithLlm,
   rehydrateWithHashes,

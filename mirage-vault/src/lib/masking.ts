@@ -11,6 +11,7 @@ import { detect } from './detectors';
 import { mask } from './masker';
 import { maskWithLlm } from './llm/hashMasking';
 import { ollamaClient } from './llm/ollama';
+import { xybridClient } from './llm/xybrid';
 import { maskingConfig, getEffectiveStrategy } from './stores/maskingConfig';
 import { get } from 'svelte/store';
 import type { StrategyConfig } from './stores/maskingConfig';
@@ -25,7 +26,7 @@ export interface UnifiedMaskResult {
     start: number;
     end: number;
   }>;
-  strategy: 'nlp' | 'ollama' | 'hybrid';
+  strategy: 'nlp' | 'ollama' | 'xybrid' | 'hybrid';
   timing: {
     totalMs: number;
     nlpMs?: number;
@@ -286,16 +287,21 @@ export async function maskWithStrategy(text: string): Promise<UnifiedMaskResult>
   const config = get(maskingConfig);
   const effective = getEffectiveStrategy(config);
   
+  // Strategy: Xybrid (embedded LLM masking)
+  if (effective.primary === 'xybrid') {
+    return await maskWithXybrid(text, config);
+  }
+
   // Strategy: Ollama (full LLM masking)
   if (effective.primary === 'ollama') {
     return await maskWithOllama(text, config);
   }
-  
+
   // Strategy: NLP with optional LLM refinement
   if (effective.useLlm) {
     return await maskWithHybrid(text, config);
   }
-  
+
   // Strategy: NLP only
   return await maskWithNlp(text);
 }
@@ -379,6 +385,57 @@ async function maskWithOllama(
     maskedText: normalizedMaskedText,
     mappings,
     strategy: 'ollama',
+    timing: {
+      totalMs: performance.now() - startTime,
+      llmMs: llmResult.metadata.durationMs,
+    },
+  };
+}
+
+/**
+ * Xybrid embedded LLM masking
+ * Falls back to NLP if xybrid model is not ready
+ */
+async function maskWithXybrid(
+  text: string,
+  config: StrategyConfig
+): Promise<UnifiedMaskResult> {
+  const startTime = performance.now();
+
+  // Check if xybrid model is loaded
+  const available = await xybridClient.isAvailable();
+
+  if (!available) {
+    console.warn('Xybrid model is not loaded, falling back to NLP masking');
+    return await maskWithNlp(text);
+  }
+
+  const llmResult = await maskWithLlm(text, config.xybrid.useJsonFormat, xybridClient);
+
+  const originalsByHash = new Map<string, string>();
+  for (const [hash, original] of llmResult.mappings.entries()) {
+    if (!hash || !original) continue;
+    originalsByHash.set(hash.toLowerCase(), original);
+  }
+
+  let maskedText = llmResult.maskedText;
+  let typesByHash = extractEntityTypesByHash(maskedText);
+
+  // Some models return mappings but fail to apply replacements in masked_text.
+  if (typesByHash.size === 0 && originalsByHash.size > 0) {
+    maskedText = buildFallbackMaskedText(text, originalsByHash, typesByHash);
+    typesByHash = extractEntityTypesByHash(maskedText);
+  }
+
+  const mappings = dedupeOllamaMappings(
+    buildOllamaMappings(text, maskedText, originalsByHash)
+  );
+  const normalizedMaskedText = normalizeMaskedTextTypes(maskedText, mappings);
+
+  return {
+    maskedText: normalizedMaskedText,
+    mappings,
+    strategy: 'xybrid',
     timing: {
       totalMs: performance.now() - startTime,
       llmMs: llmResult.metadata.durationMs,
@@ -472,6 +529,14 @@ export function getCurrentStrategyInfo(): {
   const config = get(maskingConfig);
   const effective = getEffectiveStrategy(config);
   
+  if (effective.primary === 'xybrid') {
+    return {
+      name: 'Xybrid LLM',
+      description: 'Embedded LLM-based detection',
+      icon: '🧠',
+    };
+  }
+
   if (effective.primary === 'ollama') {
     return {
       name: 'Ollama LLM',

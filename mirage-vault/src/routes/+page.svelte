@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
   import { open } from '@tauri-apps/plugin-dialog';
   import { onMount } from 'svelte';
@@ -17,7 +18,11 @@
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import SessionList from '$lib/components/SessionList.svelte';
   import SessionDetail from '$lib/components/SessionDetail.svelte';
+  import XybridProgressBanner from '$lib/components/XybridProgressBanner.svelte';
   import { maskWithStrategy } from '$lib/masking';
+  import { maskingConfig } from '$lib/stores/maskingConfig';
+  import { xybridState, isXybridActive } from '$lib/stores/xybridState';
+  import type { XybridStatus } from '$lib/stores/xybridState';
   import { BASE_ENTITY_TYPE_ORDER } from '$lib/entityColors';
   import type { UploadProgress } from '$lib/types/upload';
   import { STAGE_PROGRESS, generateTrackingId } from '$lib/types/upload';
@@ -54,6 +59,73 @@
     if (toastTimeout) clearTimeout(toastTimeout);
     toastMessage = message;
     toastTimeout = setTimeout(() => { toastMessage = ''; }, 2000);
+  }
+
+  // ---- Xybrid state ----
+  let currentXybridStatus: XybridStatus = $state('idle');
+  let currentXybridProgress: number = $state(-1);
+  let currentXybridError: string | null = $state(null);
+  let xybridActive: boolean = $state(false);
+
+  $effect(() => {
+    const unsub = xybridState.subscribe(s => {
+      currentXybridStatus = s.status;
+      currentXybridProgress = s.progress;
+      currentXybridError = s.error;
+    });
+    return unsub;
+  });
+
+  $effect(() => {
+    const unsub = isXybridActive.subscribe(v => { xybridActive = v; });
+    return unsub;
+  });
+
+  async function handleProtect() {
+    // If already active and ready, toggle back to NLP
+    if (xybridActive && currentXybridStatus === 'ready') {
+      maskingConfig.setStrategy('nlp');
+      xybridState.reset();
+      showToast('Switched to NLP masking');
+      return;
+    }
+
+    // If already ready but not active, just switch strategy
+    if (currentXybridStatus === 'ready') {
+      maskingConfig.setStrategy('xybrid');
+      showToast('Advanced Protection enabled');
+      return;
+    }
+
+    // If busy, do nothing
+    if (currentXybridStatus === 'downloading' || currentXybridStatus === 'loading' || currentXybridStatus === 'checking') {
+      return;
+    }
+
+    try {
+      xybridState.setChecking();
+      const modelStatus = await invoke<{ model_id: string; status: string }>('xybrid_check_model');
+
+      if (modelStatus.status !== 'ready') {
+        // Need to download first — events will update progress bar
+        xybridState.setDownloading(modelStatus.model_id);
+        await invoke('xybrid_download_model');
+        // invoke resolves after download completes (or fails).
+        // If it failed, an error event was emitted and caught by the listener.
+        // If it succeeded, continue to load below.
+      }
+
+      // At this point model should be on disk — load into memory
+      xybridState.setLoading();
+      await invoke<string>('xybrid_load_model');
+      xybridState.setReady();
+      maskingConfig.setStrategy('xybrid');
+      showToast('Advanced Protection enabled');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      xybridState.setError(msg);
+      logger.error('Xybrid activation failed', { stage: 'xybrid', file: msg });
+    }
   }
 
   function normalizeEntityTypeName(type: string): string {
@@ -829,7 +901,7 @@
     });
 
     const webview = getCurrentWebviewWindow();
-    let unlisten: (() => void) | undefined;
+    const cleanups: Array<() => void> = [];
 
     webview.onDragDropEvent(async (event) => {
       if (event.payload.type !== 'over') {
@@ -854,22 +926,52 @@
         }
       }
     }).then(fn => {
-      unlisten = fn;
+      cleanups.push(fn);
       logger.info('Drag-drop listener registered');
     }).catch(err => {
       logger.error('Failed to register drag-drop listener', { file: String(err) });
       errorMessage = 'Failed to initialize drag-drop: ' + (err instanceof Error ? err.message : String(err));
     });
 
+    // Xybrid download event listeners — register immediately so no events are missed
+    (async () => {
+      const u1 = await listen<{ model_id: string; progress: number }>('xybrid-download-progress', (event) => {
+        xybridState.setProgress(event.payload.progress);
+      });
+      cleanups.push(u1);
+
+      const u2 = await listen<{ model_id: string }>('xybrid-download-complete', async (event) => {
+        logger.info('Xybrid model download complete', { file: event.payload.model_id });
+        try {
+          xybridState.setLoading();
+          await invoke<string>('xybrid_load_model');
+          xybridState.setReady();
+          maskingConfig.setStrategy('xybrid');
+          showToast('Advanced Protection enabled');
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          xybridState.setError(`Model load failed: ${msg}`);
+          logger.error('Xybrid model load failed', { file: msg });
+        }
+      });
+      cleanups.push(u2);
+
+      const u3 = await listen<{ model_id: string; error: string }>('xybrid-download-error', (event) => {
+        logger.error('Xybrid download error', { file: event.payload.error });
+        xybridState.setError(event.payload.error);
+      });
+      cleanups.push(u3);
+    })();
+
     return () => {
-      unlisten?.();
+      cleanups.forEach(fn => fn());
     };
   });
 </script>
 
 <div class="app-layout">
   <!-- Left Sidebar: Navigation -->
-  <Sidebar {activeView} onnavigate={(view) => { activeView = view; if (view !== 'browse') { selectedItemId = null; selectedItem = null; } if (view !== 'sessions') { selectedSessionId = null; sessionEntities = []; sessionViewItem = null; } }} />
+  <Sidebar {activeView} xybridStatus={currentXybridStatus} isXybridActive={xybridActive} onnavigate={(view) => { activeView = view; if (view !== 'browse') { selectedItemId = null; selectedItem = null; } if (view !== 'sessions') { selectedSessionId = null; sessionEntities = []; sessionViewItem = null; } }} onprotect={handleProtect} />
 
   <!-- Center: Content Area -->
   <main
@@ -948,6 +1050,14 @@
     onrequestdeletecustomtype={requestDeleteCustomEntityType}
   />
 </div>
+
+<XybridProgressBanner
+  status={currentXybridStatus}
+  progress={currentXybridProgress}
+  error={currentXybridError}
+  onretry={handleProtect}
+  ondismiss={() => xybridState.reset()}
+/>
 
 {#if toastMessage}
   <div class="toast">{toastMessage}</div>

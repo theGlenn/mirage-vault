@@ -42,3 +42,21 @@ tokio-tungstenite = "0.24"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 futures = "0.3"
 regex = "1"
+
+# Xybrid embedded LLM inference
+xybrid-core = { path = "../../../xybrid/repos/xybrid/crates/xybrid-core", default-features = false }
+xybrid-sdk = { path = "../../../xybrid/repos/xybrid/crates/xybrid-sdk", default-features = false }
+dirs = "5"
+
+[features]
+default = ["xybrid-macos"]
+xybrid-macos = [
+    "xybrid-core/ort-download",
+    "xybrid-core/ort-coreml",
+    "xybrid-core/candle-metal",
+    "xybrid-core/llm-llamacpp",
+]
+xybrid-desktop = [
+    "xybrid-core/ort-download",
+    "xybrid-core/llm-llamacpp",
+]

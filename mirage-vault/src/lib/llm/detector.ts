@@ -14,6 +14,19 @@ export interface DetectionOptions {
   entityTypes?: string[];
 }
 
+/** Minimal interface for LLM clients used by detection functions */
+type LlmDetectorClient = {
+  isAvailable(): Promise<boolean>;
+  setConfig(config: Partial<{ model: string }>): void;
+  verifyEntities(
+    text: string,
+    entities: DetectedEntity[],
+    entityTypes?: string[],
+  ): Promise<LLMVerificationResult>;
+  detectEntities(text: string, entityTypes?: string[]): Promise<DetectedEntity[]>;
+  listModels(): Promise<string[]>;
+};
+
 export interface HybridDetectionResult {
   entities: DetectedEntity[];
   llmUsed: boolean;
@@ -103,17 +116,18 @@ function mergeEntities(
  */
 export async function detectWithLlm(
   text: string,
-  options: Partial<DetectionOptions> = {}
+  options: Partial<DetectionOptions> = {},
+  client: LlmDetectorClient = ollamaClient
 ): Promise<HybridDetectionResult> {
   const opts = { ...DEFAULT_OPTIONS, ...options };
   const startTime = performance.now();
-  
+
   // Step 1: Fast detection
   const fastStart = performance.now();
   const preliminaryDetections = detect(text);
   const preliminaryEntities = convertToLlmEntities(preliminaryDetections);
   const fastDuration = performance.now() - fastStart;
-  
+
   // If LLM is disabled, return fast results only
   if (!opts.useLlm) {
     return {
@@ -125,32 +139,32 @@ export async function detectWithLlm(
       },
     };
   }
-  
+
   // Step 2: LLM verification
   const llmStart = performance.now();
-  
+
   try {
-    // Check if Ollama is available
-    const isAvailable = await ollamaClient.isAvailable();
+    // Check if LLM is available
+    const isAvailable = await client.isAvailable();
     if (!isAvailable) {
       return {
         entities: preliminaryEntities,
         llmUsed: false,
-        llmError: 'Ollama is not running or not accessible',
+        llmError: 'LLM backend is not running or not accessible',
         timing: {
           fastDetectionMs: fastDuration,
           totalMs: performance.now() - startTime,
         },
       };
     }
-    
+
     // Configure model if specified
     if (opts.llmModel) {
-      ollamaClient.setConfig({ model: opts.llmModel });
+      client.setConfig({ model: opts.llmModel });
     }
-    
+
     // Run LLM verification
-    const llmResult = await ollamaClient.verifyEntities(
+    const llmResult = await client.verifyEntities(
       text,
       preliminaryEntities,
       opts.entityTypes
@@ -195,31 +209,32 @@ export async function detectWithLlm(
  */
 export async function detectWithLlmOnly(
   text: string,
-  options: Partial<Omit<DetectionOptions, 'useLlm'>> = {}
+  options: Partial<Omit<DetectionOptions, 'useLlm'>> = {},
+  client: LlmDetectorClient = ollamaClient
 ): Promise<HybridDetectionResult> {
   const opts = { ...DEFAULT_OPTIONS, ...options, useLlm: true };
   const startTime = performance.now();
-  
+
   try {
-    const isAvailable = await ollamaClient.isAvailable();
+    const isAvailable = await client.isAvailable();
     if (!isAvailable) {
       return {
         entities: [],
         llmUsed: false,
-        llmError: 'Ollama is not running or not accessible',
+        llmError: 'LLM backend is not running or not accessible',
         timing: {
           fastDetectionMs: 0,
           totalMs: performance.now() - startTime,
         },
       };
     }
-    
+
     if (opts.llmModel) {
-      ollamaClient.setConfig({ model: opts.llmModel });
+      client.setConfig({ model: opts.llmModel });
     }
-    
+
     const llmStart = performance.now();
-    const entities = await ollamaClient.detectEntities(text, opts.entityTypes);
+    const entities = await client.detectEntities(text, opts.entityTypes);
     const llmDuration = performance.now() - llmStart;
     
     return {

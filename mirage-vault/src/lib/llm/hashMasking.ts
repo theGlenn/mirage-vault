@@ -237,24 +237,38 @@ function parseJsonFormat(jsonText: string): HashMaskingResult {
   }
 }
 
+/** Minimal interface for the LLM client used by masking functions */
+type LlmGenerateClient = {
+  generate(request: {
+    prompt: string;
+    system?: string;
+    format?: 'json' | object;
+    options?: { temperature?: number; num_predict?: number };
+  }): Promise<string>;
+  getConfig(): { model: string };
+  setConfig?(config: Partial<{ model: string }>): void;
+};
+
 /**
  * Mask text using LLM with hash-based mappings
- * 
+ *
  * @param text - Original text to mask
  * @param useJsonFormat - Whether to use JSON format (better for large models) or simple format (better for small models)
+ * @param client - LLM client to use (defaults to ollamaClient, pass xybridClient for embedded inference)
  */
 export async function maskWithLlm(
   text: string,
-  useJsonFormat: boolean = false
+  useJsonFormat: boolean = false,
+  client: LlmGenerateClient = ollamaClient
 ): Promise<HashMaskingResult> {
   const startTime = performance.now();
-  
-  const prompt = useJsonFormat 
+
+  const prompt = useJsonFormat
     ? `${MASKING_PROMPT}\n\nTEXT TO MASK:\n${text}`
     : `${SIMPLE_MASKING_PROMPT}\n${text}`;
-  
-  const response = await ollamaClient.generate({
-    system: useJsonFormat 
+
+  const response = await client.generate({
+    system: useJsonFormat
       ? 'You are a PII masking system. Return only valid JSON.'
       : undefined,
     prompt,
@@ -264,17 +278,17 @@ export async function maskWithLlm(
       num_predict: text.length * 2, // Estimate based on input length
     },
   });
-  
+
   const durationMs = performance.now() - startTime;
-  
+
   // Parse the response
-  const result = useJsonFormat 
+  const result = useJsonFormat
     ? parseJsonFormat(response)
     : parseSimpleFormat(response);
-  
+
   result.metadata.durationMs = durationMs;
-  result.metadata.model = ollamaClient.getConfig().model;
-  
+  result.metadata.model = client.getConfig().model;
+
   return result;
 }
 
@@ -331,7 +345,8 @@ export function validateHashMapping(
  */
 export async function testModelFormat(
   text: string,
-  model: string
+  model: string,
+  client: LlmGenerateClient = ollamaClient
 ): Promise<{
   model: string;
   success: boolean;
@@ -341,17 +356,17 @@ export async function testModelFormat(
   sample: string;
 }> {
   const startTime = performance.now();
-  
+
   try {
-    ollamaClient.setConfig({ model });
-    
+    client.setConfig?.({ model });
+
     // Try JSON format first
-    let result = await maskWithLlm(text, true);
+    let result = await maskWithLlm(text, true, client);
     let format: 'json' | 'simple' = 'json';
-    
+
     // If JSON fails (no entities detected), try simple format
     if (result.mappings.size === 0) {
-      result = await maskWithLlm(text, false);
+      result = await maskWithLlm(text, false, client);
       format = 'simple';
     }
     

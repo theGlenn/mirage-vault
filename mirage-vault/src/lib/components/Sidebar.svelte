@@ -1,9 +1,26 @@
 <script lang="ts">
 	import PixelIcon from './PixelIcon.svelte';
+	import type { XybridStatus } from '$lib/stores/xybridState';
 
 	export type ActiveView = 'browse' | 'sessions' | 'settings';
 
-	let { activeView = 'browse', onnavigate }: { activeView: ActiveView; onnavigate: (view: ActiveView) => void } = $props();
+	let {
+		activeView = 'browse',
+		onnavigate,
+		xybridStatus = 'idle' as XybridStatus,
+		isXybridActive = false,
+		onprotect,
+	}: {
+		activeView: ActiveView;
+		onnavigate: (view: ActiveView) => void;
+		xybridStatus: XybridStatus;
+		isXybridActive: boolean;
+		onprotect: () => void;
+	} = $props();
+
+	let protectBusy = $derived(
+		xybridStatus === 'downloading' || xybridStatus === 'loading' || xybridStatus === 'checking',
+	);
 </script>
 
 <aside class="sidebar-nav">
@@ -40,6 +57,21 @@
 			<span class="nav-label">SETTINGS</span>
 		</button>
 	</nav>
+
+	<div class="sidebar-actions">
+		<button
+			class="nav-item protect-btn"
+			class:protect-active={isXybridActive && xybridStatus === 'ready'}
+			class:protect-busy={protectBusy}
+			class:protect-error={xybridStatus === 'error'}
+			onclick={onprotect}
+			disabled={protectBusy}
+			title={isXybridActive ? 'Switch back to NLP' : 'Enable Advanced Protection'}
+		>
+			<PixelIcon name="shield" size={24} />
+			<span class="nav-label">PROTECT</span>
+		</button>
+	</div>
 </aside>
 
 <style>
@@ -104,5 +136,34 @@
 		font-size: 8px;
 		letter-spacing: 0.05em;
 		text-transform: uppercase;
+	}
+
+	.sidebar-actions {
+		margin-top: auto;
+		padding: 8px 4px;
+		border-top: 1px solid var(--border);
+	}
+
+	.protect-active {
+		background-color: var(--bg-elevated);
+		color: var(--color-green);
+	}
+
+	.protect-busy {
+		animation: pulse-orange 1.5s ease-in-out infinite;
+	}
+
+	.protect-error {
+		color: var(--accent-red);
+	}
+
+	.nav-item:disabled {
+		cursor: default;
+		opacity: 0.7;
+	}
+
+	@keyframes pulse-orange {
+		0%, 100% { color: var(--text-secondary); }
+		50% { color: var(--color-orange); }
 	}
 </style>
