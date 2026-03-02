@@ -44,8 +44,8 @@ futures = "0.3"
 regex = "1"
 
 # Xybrid embedded LLM inference
-xybrid-core = { path = "../../../xybrid/repos/xybrid/crates/xybrid-core", default-features = false }
-xybrid-sdk = { path = "../../../xybrid/repos/xybrid/crates/xybrid-sdk", default-features = false }
+xybrid-core = { git = "https://github.com/xybrid-ai/xybrid", default-features = false }
+xybrid-sdk = { git = "https://github.com/xybrid-ai/xybrid", default-features = false }
 dirs = "5"
 
 [features]

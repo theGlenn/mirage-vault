@@ -8336,6 +8336,7 @@ dependencies = [
 [[package]]
 name = "xybrid-core"
 version = "0.1.0-alpha8"
+source = "git+https://github.com/xybrid-ai/xybrid#00b689437bb278ae8feddd0b87ba4928c1681a20"
 dependencies = [
  "anyhow",
  "base64 0.21.7",
@@ -8384,6 +8385,7 @@ dependencies = [
 [[package]]
 name = "xybrid-macros"
 version = "0.1.0-alpha8"
+source = "git+https://github.com/xybrid-ai/xybrid#00b689437bb278ae8feddd0b87ba4928c1681a20"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8393,6 +8395,7 @@ dependencies = [
 [[package]]
 name = "xybrid-sdk"
 version = "0.1.0-alpha8"
+source = "git+https://github.com/xybrid-ai/xybrid#00b689437bb278ae8feddd0b87ba4928c1681a20"
 dependencies = [
  "anyhow",
  "chrono",
