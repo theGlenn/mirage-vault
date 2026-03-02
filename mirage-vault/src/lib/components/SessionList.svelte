@@ -37,8 +37,8 @@
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
     const name = `Session — ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
-    await invoke('create_session', { name });
-    await refreshSessions();
+    const id = await invoke<number>('create_session', { name });
+    onselectsession(id);
   }
 
   async function archiveSession(session: SessionSummary) {
