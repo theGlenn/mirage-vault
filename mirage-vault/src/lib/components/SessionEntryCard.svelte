@@ -86,7 +86,6 @@
   padding: 12px 14px;
   background: var(--bg-surface);
   border: 2px solid var(--border);
-  border-left: 4px solid transparent;
   border-radius: 8px;
   cursor: pointer;
   transition: background-color 0.15s, border-color 0.15s;
@@ -97,11 +96,11 @@
 }
 
 .entry-card-input {
-  border-left-color: var(--accent-orange);
+  border-color: var(--color-light-orange);
 }
 
 .entry-card-output {
-  border-left-color: var(--color-grim-blue);
+  border-color: var(--color-grim-blue);
 }
 
 /* Header */
@@ -118,7 +117,7 @@
 }
 
 .entry-card-input .entry-icon {
-  color: var(--accent-orange);
+  color: var(--color-orange);
 }
 
 .entry-card-output .entry-icon {

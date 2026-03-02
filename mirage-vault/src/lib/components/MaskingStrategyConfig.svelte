@@ -321,11 +321,11 @@
   }
 
   .strategy-card:hover {
-    border-color: var(--accent-orange);
+    border-color: var(--color-orange);
   }
 
   .strategy-card.active {
-    border-color: var(--accent-orange);
+    border-color: var(--color-orange);
     background: var(--bg-surface);
   }
 
@@ -358,7 +358,7 @@
 
   .selected-badge {
     padding: 2px 6px;
-    background: var(--accent-orange);
+    background: var(--color-orange);
     color: #fff;
     font-size: 10px;
     font-weight: 600;
@@ -408,7 +408,7 @@
   }
 
   .unavailable-hint a {
-    color: var(--accent-orange);
+    color: var(--color-orange);
     text-decoration: underline;
   }
 
@@ -459,7 +459,7 @@
 
   .details-toggle:hover {
     background: var(--bg-elevated);
-    border-color: var(--accent-orange);
+    border-color: var(--color-orange);
   }
 
   .details-panel {
@@ -522,7 +522,7 @@
   .setting-row input:focus,
   .setting-row select:focus {
     outline: none;
-    border-color: var(--accent-orange);
+    border-color: var(--color-orange);
   }
 
   .input-with-status {
@@ -545,7 +545,7 @@
   }
 
   .refresh-btn:hover {
-    border-color: var(--accent-orange);
+    border-color: var(--color-orange);
     background: var(--bg-surface);
   }
 
@@ -581,7 +581,7 @@
     display: inline-block;
     margin-left: 6px;
     padding: 2px 6px;
-    background: var(--accent-orange);
+    background: var(--color-orange);
     color: #fff;
     font-size: 10px;
     font-weight: 600;

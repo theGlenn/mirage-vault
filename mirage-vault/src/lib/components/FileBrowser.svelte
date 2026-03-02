@@ -213,13 +213,13 @@
 }
 
 .drop-zone-active {
-  border-color: var(--accent-orange);
-  background-color: rgba(232, 117, 26, 0.05);
+  border-color: var(--color-orange);
+  background-color: color-mix(in srgb, var(--color-orange) 5%, transparent);
   animation: pulse-border 1.5s ease-in-out infinite;
 }
 
 @keyframes pulse-border {
-  0%, 100% { border-color: var(--accent-orange); }
+  0%, 100% { border-color: var(--color-orange); }
   50% { border-color: var(--accent-yellow); }
 }
 
@@ -228,7 +228,7 @@
 }
 
 .drop-zone-active .drop-zone-icon {
-  color: var(--accent-orange);
+  color: var(--color-orange);
 }
 
 .drop-zone-text {
@@ -247,9 +247,9 @@
 /* Action button */
 .action-btn {
   padding: 8px 16px;
-  border: 2px solid var(--accent-orange);
+  border: 2px solid var(--color-light-orange);
   border-radius: 8px;
-  background-color: var(--accent-orange);
+  background-color: var(--color-orange);
   color: #fff;
   font-size: 13px;
   font-weight: 500;
@@ -301,7 +301,7 @@
 
 .paste-textarea:focus {
   outline: none;
-  border-color: var(--accent-orange);
+  border-color: var(--color-orange);
 }
 
 /* File browser (grid state) */
@@ -315,7 +315,7 @@
 }
 
 .file-browser-dragover {
-  border-color: var(--accent-orange);
+  border-color: var(--color-orange);
   animation: pulse-border 1.5s ease-in-out infinite;
 }
 
@@ -354,8 +354,8 @@
 
 .toolbar-btn:hover:not(:disabled) {
   background: var(--bg-elevated);
-  border-color: var(--accent-orange);
-  color: var(--accent-orange);
+  border-color: var(--color-orange);
+  color: var(--color-orange);
 }
 
 .toolbar-btn:disabled {
@@ -425,10 +425,8 @@
   flex-direction: column;
   gap: 8px;
   padding: 16px;
-  padding-left: 14px;
   background: var(--bg-surface);
-  border: 2px solid var(--border);
-  border-left: 4px solid var(--accent-orange);
+  border: 2px solid var(--color-light-orange);
   border-radius: 8px;
   cursor: default;
   opacity: 0.7;
@@ -446,9 +444,9 @@
   font-size: 10px;
   font-weight: 600;
   text-transform: capitalize;
-  color: var(--accent-orange);
-  background: rgba(232, 117, 26, 0.12);
-  border: 1px solid var(--accent-orange);
+  color: var(--color-orange);
+  background: color-mix(in srgb, var(--color-orange) 12%, transparent);
+  border: 1px solid var(--color-light-orange);
   border-radius: 4px;
   letter-spacing: 0.02em;
 }
@@ -480,7 +478,7 @@
 }
 
 .file-card-pending .file-card-stage {
-  color: var(--accent-orange);
+  color: var(--color-orange);
   font-weight: 500;
   font-size: 12px;
   text-transform: capitalize;
@@ -508,7 +506,7 @@
 
 .file-card-pending .file-card-progress-fill {
   height: 100%;
-  background: var(--accent-orange);
+  background: var(--color-orange);
   transition: width 0.4s ease;
   border-radius: 0 0 6px 6px;
 }

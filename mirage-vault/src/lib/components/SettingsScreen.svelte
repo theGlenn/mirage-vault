@@ -119,12 +119,12 @@
 	}
 
 	.theme-option-active {
-		background-color: var(--accent-orange);
+		background-color: var(--color-orange);
 		color: #fff;
 	}
 
 	.theme-option-active:hover {
-		background-color: var(--accent-orange);
+		background-color: var(--color-orange);
 		color: #fff;
 	}
 

@@ -582,7 +582,7 @@
 }
 
 .header-icon-input {
-  color: var(--accent-orange);
+  color: var(--color-orange);
 }
 
 .header-icon-output {
@@ -660,7 +660,7 @@
 }
 
 .toggle-btn-active {
-  background-color: var(--accent-orange);
+  background-color: var(--color-orange);
   color: #fff;
 }
 
@@ -755,7 +755,7 @@
   width: 24px;
   height: 24px;
   border: 2px solid var(--border);
-  border-top-color: var(--accent-orange);
+  border-top-color: var(--color-orange);
   border-radius: 50%;
   animation: spin 0.8s steps(8) infinite;
 }

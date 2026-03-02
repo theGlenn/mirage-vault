@@ -61,8 +61,8 @@
 	}
 
 	.brand-logo {
-		width: 44px;
-		height: 44px;
+		width: 14px;
+		height: 14px;
 		object-fit: contain;
 		border-radius: 8px;
 	}
@@ -87,7 +87,6 @@
 		cursor: pointer;
 		font-family: inherit;
 		transition: background-color 0.15s, color 0.15s;
-		border-left: 2px solid transparent;
 	}
 
 	.nav-item:hover {
@@ -97,8 +96,7 @@
 
 	.nav-item-active {
 		background-color: var(--bg-elevated);
-		color: var(--accent-orange);
-		border-left-color: var(--accent-orange);
+		color: var(--color-orange);
 	}
 
 	.nav-label {

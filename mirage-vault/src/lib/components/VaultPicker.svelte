@@ -216,7 +216,7 @@
 }
 
 .picker-item:hover:not(:disabled) {
-  border-color: var(--accent-orange);
+  border-color: var(--color-orange);
   background: var(--bg-surface);
 }
 
@@ -226,7 +226,7 @@
 }
 
 .picker-item-adding {
-  border-color: var(--accent-orange);
+  border-color: var(--color-orange);
 }
 
 .picker-item-icon {
@@ -263,7 +263,7 @@
 .picker-add-label {
   font-family: 'Geist Pixel', monospace;
   font-size: 10px;
-  color: var(--accent-orange);
+  color: var(--color-orange);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -272,7 +272,7 @@
   width: 20px;
   height: 20px;
   border: 2px solid var(--border);
-  border-top-color: var(--accent-orange);
+  border-top-color: var(--color-orange);
   border-radius: 50%;
   animation: spin 0.8s steps(8) infinite;
 }
@@ -281,7 +281,7 @@
   width: 14px;
   height: 14px;
   border: 2px solid var(--border);
-  border-top-color: var(--accent-orange);
+  border-top-color: var(--color-orange);
   border-radius: 50%;
   animation: spin 0.8s steps(8) infinite;
 }

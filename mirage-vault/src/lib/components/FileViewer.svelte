@@ -628,7 +628,7 @@
 }
 
 .toggle-btn-active {
-  background-color: var(--accent-orange);
+  background-color: var(--color-orange);
   color: #fff;
 }
 
@@ -671,10 +671,10 @@
   align-items: center;
   gap: 10px;
   padding: 10px 16px;
-  background-color: rgba(232, 117, 26, 0.12);
-  border-bottom: 1px solid var(--accent-orange);
+  background-color: color-mix(in srgb, var(--color-orange) 12%, transparent);
+  border-bottom: 1px solid var(--color-orange);
   font-size: 13px;
-  color: var(--accent-orange);
+  color: var(--color-orange);
   flex-shrink: 0;
 }
 
@@ -682,7 +682,7 @@
   width: 16px;
   height: 16px;
   border: 2px solid var(--border);
-  border-top-color: var(--accent-orange);
+  border-top-color: var(--color-orange);
   border-radius: 50%;
   animation: viewer-spin 0.8s steps(8) infinite;
   flex-shrink: 0;
@@ -720,9 +720,9 @@
 
 .retry-btn {
   padding: 4px 12px;
-  border: 2px solid var(--accent-orange);
+  border: 2px solid var(--color-orange);
   border-radius: 6px;
-  background: var(--accent-orange);
+  background: var(--color-orange);
   color: #fff;
   font-size: 12px;
   font-weight: 500;

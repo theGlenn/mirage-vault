@@ -197,7 +197,7 @@
   align-items: center;
   gap: 6px;
   padding: 8px 16px;
-  border: 2px solid var(--color-orange);
+  border: 2px solid var(--color-light-orange);
   border-radius: 8px;
   background-color: var(--color-orange);
   color: #fff;
@@ -244,10 +244,8 @@
   flex-direction: column;
   gap: 8px;
   padding: 16px;
-  padding-left: 14px;
   background: var(--bg-surface);
   border: 2px solid var(--border);
-  border-left: 4px solid transparent;
   border-radius: 8px;
   cursor: pointer;
   transition: background-color 0.15s, border-color 0.15s;
@@ -255,7 +253,7 @@
 
 .session-card:hover {
   background: var(--bg-elevated);
-  border-left: 4px solid var(--border-accent);
+  border-color: var(--border-accent);
 }
 
 .session-card-archived {
@@ -295,9 +293,9 @@
 }
 
 .session-status-active {
-  color: var(--accent-orange);
-  background: rgba(232, 117, 26, 0.12);
-  border: 1px solid var(--accent-orange);
+  color: var(--color-orange);
+  background: color-mix(in srgb, var(--color-orange) 12%, transparent);
+  border: 1px solid var(--color-light-orange);
 }
 
 .session-status-archived {

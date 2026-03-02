@@ -225,10 +225,8 @@
   flex-direction: column;
   gap: 8px;
   padding: 16px;
-  padding-left: 14px;
   background: var(--bg-surface);
   border: 2px solid var(--border);
-  border-left: 4px solid transparent;
   border-radius: 8px;
   cursor: pointer;
   transition: background-color 0.15s, border-color 0.15s;
@@ -242,24 +240,23 @@
 
 .file-card:hover {
   background: var(--bg-elevated);
-  border-left: 4px solid var(--border-accent);
+  border-color: var(--border-accent);
 }
 
 .file-card-error {
   border-color: var(--accent-red);
-  border-left: 4px solid var(--accent-red);
 }
 
 .file-card-error:hover {
-  border-left: 4px solid var(--accent-red);
+  border-color: var(--accent-red);
 }
 
 .file-card-processing {
-  border-left: 4px solid var(--accent-orange);
+  border-color: var(--color-light-orange);
 }
 
 .file-card-processing:hover {
-  border-left: 4px solid var(--accent-orange);
+  border-color: var(--color-light-orange);
 }
 
 .file-card-delete {
@@ -293,8 +290,8 @@
   font-weight: 600;
   text-transform: capitalize;   
   color: var(--color-orange);
-  background: rgba(232, 117, 26, 0.12);
-  border: 1px solid var(--accent-orange);
+  background: color-mix(in srgb, var(--color-orange) 12%, transparent);
+  border: 1px solid var(--color-light-orange);
   border-radius: 4px;
   letter-spacing: 0.02em;
 }
@@ -313,7 +310,7 @@
 }
 
 .file-card-stage {
-  color: var(--accent-orange);
+  color: var(--color-orange);
   font-weight: 500;
   font-size: 12px;
   text-transform: capitalize;
@@ -333,7 +330,7 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  color: var(--accent-orange);
+  color: var(--color-orange);
   font-weight: 500;
   font-size: 12px;
 }
@@ -406,7 +403,7 @@
 
 .file-card-progress-fill {
   height: 100%;
-  background: var(--accent-orange);
+  background: var(--color-orange);
   transition: width 0.4s ease;
   border-radius: 0 0 6px 6px;
 }

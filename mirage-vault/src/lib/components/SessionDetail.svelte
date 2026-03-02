@@ -495,7 +495,7 @@
 }
 
 .session-detail-dragover {
-  outline: 2px solid var(--accent-orange);
+  outline: 2px solid var(--color-orange);
   outline-offset: -2px;
 }
 
@@ -546,12 +546,12 @@
 }
 
 .session-name:hover {
-  color: var(--accent-orange);
+  color: var(--color-orange);
 }
 
 .name-input {
   width: 100%;
-  border: 2px solid var(--accent-orange);
+  border: 2px solid var(--color-orange);
   border-radius: 6px;
   padding: 4px 8px;
   background: var(--bg-surface);
@@ -582,8 +582,8 @@
 }
 
 .add-files-btn:hover:not(:disabled) {
-  border-color: var(--accent-orange);
-  color: var(--accent-orange);
+  border-color: var(--color-orange);
+  color: var(--color-orange);
   background: var(--bg-elevated);
 }
 
@@ -605,9 +605,9 @@
 }
 
 .status-active {
-  color: var(--accent-orange);
-  background: rgba(232, 117, 26, 0.12);
-  border: 1px solid var(--accent-orange);
+  color: var(--color-orange);
+  background: color-mix(in srgb, var(--color-orange) 12%, transparent);
+  border: 1px solid var(--color-light-orange);
 }
 
 .status-archived {
@@ -671,7 +671,7 @@
 }
 
 .paste-textarea:focus {
-  border-color: var(--accent-orange);
+  border-color: var(--color-orange);
 }
 
 .paste-textarea:disabled {
@@ -686,9 +686,9 @@
   width: 36px;
   height: 36px;
   padding: 0;
-  border: 2px solid var(--accent-orange);
+  border: 2px solid var(--color-orange);
   border-radius: 0px;
-  background: var(--accent-orange);
+  background: var(--color-orange);
   color: var(--bg-primary);
   cursor: pointer;
   flex-shrink: 0;
@@ -724,8 +724,8 @@
   justify-content: center;
   gap: 12px;
   background: color-mix(in srgb, var(--bg-primary) 85%, transparent);
-  border: 2px dashed var(--accent-orange);
-  color: var(--accent-orange);
+  border: 2px dashed var(--color-orange);
+  color: var(--color-orange);
   font-family: 'Geist Pixel', monospace;
   font-size: 12px;
   text-transform: uppercase;
@@ -740,7 +740,7 @@
 }
 
 @keyframes pulse-border {
-  0%, 100% { border-color: var(--accent-orange); }
+  0%, 100% { border-color: var(--color-orange); }
   50% { border-color: var(--accent-yellow); }
 }
 
@@ -784,7 +784,7 @@
   width: 24px;
   height: 24px;
   border: 2px solid var(--border);
-  border-top-color: var(--accent-orange);
+  border-top-color: var(--color-orange);
   border-radius: 50%;
   animation: spin 0.8s steps(8) infinite;
 }
