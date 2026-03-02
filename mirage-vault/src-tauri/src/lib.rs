@@ -54,6 +54,7 @@ pub fn run() {
             commands::remove_item_from_session,
             commands::get_session_entities,
             commands::add_session_entry,
+            commands::update_session_entry_content,
             commands::decode_session_entry,
             commands::reconcile_item_tokens,
         ])

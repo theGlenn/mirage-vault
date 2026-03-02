@@ -1018,6 +1018,29 @@ pub fn add_session_entry(
 }
 
 #[tauri::command]
+pub fn update_session_entry_content(
+    db: State<'_, DbState>,
+    entry_id: i64,
+    raw_content: String,
+) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+
+    let encrypted_content = if crypto::is_key_set() {
+        crypto::encrypt(&raw_content)?
+    } else {
+        raw_content
+    };
+
+    conn.execute(
+        "UPDATE session_entries SET raw_content = ?1 WHERE id = ?2",
+        rusqlite::params![encrypted_content, entry_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
 pub fn decode_session_entry(
     db: State<'_, DbState>,
     session_id: i64,

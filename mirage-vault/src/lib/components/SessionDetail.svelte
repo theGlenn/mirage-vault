@@ -5,6 +5,8 @@
   import SessionEntryCard from './SessionEntryCard.svelte';
   import SessionEntryPopup from './SessionEntryPopup.svelte';
   import VaultPicker from './VaultPicker.svelte';
+  import { mask } from '$lib/masker';
+  import { normalizeEntityTypeName } from '$lib/entityColors';
 
   interface SessionEntryOutput {
     id: number;
@@ -141,6 +143,102 @@
   async function handleEntryPopupRefresh() {
     await loadSession();
     await loadSessionEntities();
+  }
+
+  interface EntityInput {
+    entity_type: string;
+    original_value: string;
+    token: string;
+    span_start: number;
+    span_end: number;
+  }
+
+  function findAllOccurrences(text: string, value: string): Array<{ start: number; end: number }> {
+    if (!value) return [];
+    const ranges: Array<{ start: number; end: number }> = [];
+    let startIndex = 0;
+    while (startIndex <= text.length - value.length) {
+      const idx = text.indexOf(value, startIndex);
+      if (idx === -1) break;
+      ranges.push({ start: idx, end: idx + value.length });
+      startIndex = idx + value.length;
+    }
+    return ranges;
+  }
+
+  async function handleAddCustomEntity(payload: { entityType: string; value: string; itemId: number }) {
+    const { entityType, value, itemId } = payload;
+    const trimmedValue = value.trim();
+    if (!trimmedValue || !entityType) return;
+
+    // Load fresh item detail
+    let item: ItemDetail;
+    try {
+      item = await invoke<ItemDetail>('get_item', { itemId });
+    } catch (err) {
+      console.error('Failed to load item for custom entity:', err);
+      return;
+    }
+
+    const occurrences = findAllOccurrences(item.raw_content, trimmedValue);
+    if (occurrences.length === 0) return;
+
+    const existingDetections = item.entities
+      .map(entity => ({
+        type: normalizeEntityTypeName(entity.entity_type),
+        value: entity.original_value,
+        start: entity.span_start,
+        end: entity.span_end
+      }))
+      .filter(entity => entity.type.length > 0);
+
+    const customDetections = occurrences.map(occ => ({
+      type: entityType,
+      value: trimmedValue,
+      start: occ.start,
+      end: occ.end
+    }));
+
+    const remainingDetections = existingDetections.filter(detection =>
+      !customDetections.some(custom => detection.start < custom.end && detection.end > custom.start)
+    );
+
+    const remasked = mask(item.raw_content, [...remainingDetections, ...customDetections]);
+    const entities: EntityInput[] = remasked.mappings.map(mapping => ({
+      entity_type: mapping.type,
+      original_value: mapping.original,
+      token: mapping.token || mapping.hash || '[MASKED]',
+      span_start: mapping.start,
+      span_end: mapping.end
+    }));
+
+    try {
+      await invoke('update_item_masking', {
+        itemId,
+        maskedContent: remasked.maskedText,
+        entities
+      });
+
+      // Reconcile tokens with session namespace
+      await invoke('reconcile_item_tokens', { sessionId, itemId });
+
+      // Update the session entry's raw_content with new masked content
+      const updatedItem = await invoke<ItemDetail>('get_item', { itemId });
+      const entryForItem = session?.entries.find(e => e.source_item_id === itemId);
+      if (entryForItem) {
+        await invoke('update_session_entry_content', {
+          entryId: entryForItem.id,
+          rawContent: updatedItem.masked_content
+        });
+      }
+
+      // Refresh everything
+      await loadSession();
+      await loadSessionEntities();
+      onentryitemchange?.(updatedItem);
+    } catch (err) {
+      console.error('Failed to add custom entity in session:', err);
+    }
   }
 
   export async function loadSession() {
@@ -367,6 +465,7 @@
         {sessionEntities}
         onclose={() => { selectedEntryId = null; onentryitemchange?.(null); }}
         onrefresh={handleEntryPopupRefresh}
+        onaddselectedentity={handleAddCustomEntity}
       />
     {/if}
 

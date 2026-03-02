@@ -2,6 +2,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import PixelIcon from './PixelIcon.svelte';
   import type { SessionEntry } from './SessionEntryCard.svelte';
+  import { BASE_ENTITY_TYPE_ORDER, createEntityTypeColorMap, normalizeEntityTypeName } from '$lib/entityColors';
 
   interface EntityDetail {
     id: number;
@@ -30,20 +31,28 @@
     token: string;
   }
 
+  interface TextSegment {
+    text: string;
+    entity?: EntityDetail;
+  }
+
   const TOKEN_PATTERN = /\[\[(\w+)[_:](\w+)\]\]/g;
+  const BASE_ENTITY_TYPES: string[] = [...BASE_ENTITY_TYPE_ORDER];
 
   let {
     entry,
     sessionId,
     sessionEntities,
     onclose,
-    onrefresh
+    onrefresh,
+    onaddselectedentity
   }: {
     entry: SessionEntry;
     sessionId: number;
     sessionEntities: SessionEntityOutput[];
     onclose: () => void;
     onrefresh: () => void;
+    onaddselectedentity?: (payload: { entityType: string; value: string; itemId: number }) => void;
   } = $props();
 
   let isInput = $derived(entry.entry_type === 'input');
@@ -54,6 +63,14 @@
   let loadingItem = $state(false);
   let decoding = $state(false);
   let copyFeedback = $state(false);
+
+  // Selection popup state for manual redaction (input entries in original view)
+  let originalContentEl: HTMLDivElement | null = $state(null);
+  let selectionPopupOpen = $state(false);
+  let selectionText = $state('');
+  let selectionTypeInput = $state('PERSON');
+  let selectionPopupLeft = $state(0);
+  let selectionPopupTop = $state(0);
 
   // For input entries, load full item detail if source_item_id exists
   $effect(() => {
@@ -72,6 +89,148 @@
       loadingItem = false;
     }
   }
+
+  // Entity color map for highlighting in original view
+  let entityTypeColorMap = $derived.by(() => {
+    if (!itemDetail) return createEntityTypeColorMap([...BASE_ENTITY_TYPES]);
+    const types = itemDetail.entities.map(e => e.entity_type);
+    return createEntityTypeColorMap([...BASE_ENTITY_TYPES, ...types]);
+  });
+
+  function getEntityHighlightStyle(type: string): string {
+    const normalized = normalizeEntityTypeName(type);
+    const rgb = entityTypeColorMap.get(normalized) ?? '107 114 128';
+    return `background-color: rgb(${rgb} / 0.16); border-bottom-color: rgb(${rgb});`;
+  }
+
+  function dedupeEntities(entities: EntityDetail[]): EntityDetail[] {
+    const byKey = new Map<string, EntityDetail>();
+    for (const entity of entities) {
+      const key = `${entity.span_start}:${entity.span_end}:${entity.original_value.trim().toLowerCase()}`;
+      if (!byKey.has(key)) {
+        byKey.set(key, entity);
+      }
+    }
+    return Array.from(byKey.values()).sort((a, b) => a.span_start - b.span_start || a.span_end - b.span_end);
+  }
+
+  function buildHighlightedSegments(text: string, entities: EntityDetail[]): TextSegment[] {
+    if (!entities.length) return [{ text }];
+    const sorted = dedupeEntities(entities);
+    const segments: TextSegment[] = [];
+    let pos = 0;
+    for (const entity of sorted) {
+      if (entity.span_start > pos) {
+        segments.push({ text: text.substring(pos, entity.span_start) });
+      }
+      segments.push({ text: text.substring(entity.span_start, entity.span_end), entity });
+      pos = entity.span_end;
+    }
+    if (pos < text.length) {
+      segments.push({ text: text.substring(pos) });
+    }
+    return segments;
+  }
+
+  function getLegendTypes(entities: EntityDetail[]): string[] {
+    const extras = Array.from(
+      new Set(
+        entities
+          .map(e => normalizeEntityTypeName(e.entity_type))
+          .filter(type => type && !BASE_ENTITY_TYPES.includes(type))
+      )
+    ).sort((a, b) => a.localeCompare(b));
+    return [...BASE_ENTITY_TYPES, ...extras];
+  }
+
+  const ENTITY_TYPE_LABELS: Record<string, string> = {
+    EMAIL: 'Email',
+    PERSON: 'Person',
+    ORG: 'Organization',
+    AMT: 'Amount',
+    PHONE: 'Phone',
+    API_KEY: 'API Key'
+  };
+
+  function getEntityLabel(type: string): string {
+    const normalized = normalizeEntityTypeName(type);
+    return ENTITY_TYPE_LABELS[normalized] || normalized;
+  }
+
+  // Selection popup handlers
+  function closeSelectionPopup() {
+    selectionPopupOpen = false;
+    selectionText = '';
+  }
+
+  function updateSelectionPopup() {
+    if (viewMode !== 'original' || !isInput || !originalContentEl) {
+      closeSelectionPopup();
+      return;
+    }
+
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+      closeSelectionPopup();
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    if (!originalContentEl.contains(range.commonAncestorContainer)) {
+      closeSelectionPopup();
+      return;
+    }
+
+    const selected = selection.toString().trim();
+    if (!selected) {
+      closeSelectionPopup();
+      return;
+    }
+
+    const rect = range.getBoundingClientRect();
+    const containerRect = originalContentEl.getBoundingClientRect();
+
+    const popupWidth = 280;
+    let left = rect.left - containerRect.left + rect.width / 2 - popupWidth / 2;
+    left = Math.max(12, Math.min(left, Math.max(12, containerRect.width - popupWidth - 12)));
+
+    let top = rect.top - containerRect.top - 78;
+    if (top < 8) {
+      top = rect.bottom - containerRect.top + 8;
+    }
+
+    selectionText = selected;
+    selectionPopupLeft = left;
+    selectionPopupTop = top;
+    selectionPopupOpen = true;
+  }
+
+  function handleOriginalMouseUp(event: MouseEvent) {
+    const target = event.target;
+    if (target instanceof HTMLElement && target.closest('.selection-popup')) {
+      return;
+    }
+    queueMicrotask(updateSelectionPopup);
+  }
+
+  function submitSelectedEntity() {
+    const normalizedType = normalizeEntityTypeName(selectionTypeInput);
+    if (!normalizedType || !selectionText || !itemDetail) return;
+
+    onaddselectedentity?.({
+      entityType: normalizedType,
+      value: selectionText,
+      itemId: itemDetail.id
+    });
+    closeSelectionPopup();
+    window.getSelection()?.removeAllRanges();
+  }
+
+  $effect(() => {
+    if (viewMode !== 'original' && selectionPopupOpen) {
+      closeSelectionPopup();
+    }
+  });
 
   // Build a token → original_value map from session entities for highlighting
   let tokenMap = $derived.by(() => {
@@ -251,10 +410,63 @@
       </div>
     </div>
 
+    {#if isInput && viewMode === 'original' && itemDetail}
+      <div class="entity-legend">
+        {#each getLegendTypes(itemDetail.entities) as type}
+          <span class="legend-item">
+            <span class="legend-swatch" style={getEntityHighlightStyle(type)}></span>
+            {getEntityLabel(type)}
+          </span>
+        {/each}
+      </div>
+    {/if}
+
     {#if loadingItem && isInput}
       <div class="popup-content popup-loading">
         <div class="spinner"></div>
         <p>Loading file content...</p>
+      </div>
+    {:else if isInput && viewMode === 'original' && itemDetail}
+      <div class="popup-content popup-content-original" role="presentation" bind:this={originalContentEl} onmouseup={handleOriginalMouseUp}>
+        {#each buildHighlightedSegments(itemDetail.raw_content, itemDetail.entities) as segment}
+          {#if segment.entity}
+            <span
+              class="entity-highlight"
+              style={getEntityHighlightStyle(segment.entity.entity_type)}
+              data-tooltip="{'\u2192'} {segment.entity.token}"
+            >{segment.text}</span>
+          {:else}
+            {segment.text}
+          {/if}
+        {/each}
+
+        {#if selectionPopupOpen}
+          <div
+            class="selection-popup"
+            style={`left: ${selectionPopupLeft}px; top: ${selectionPopupTop}px;`}
+          >
+            <div class="selection-popup-text">{selectionText}</div>
+            <input
+              class="selection-popup-type"
+              list="session-entity-type-options"
+              bind:value={selectionTypeInput}
+              placeholder="Type (e.g. CLIENT, PROJECT_CODE)"
+            />
+            <datalist id="session-entity-type-options">
+              {#each BASE_ENTITY_TYPES as type}
+                <option value={type}></option>
+              {/each}
+            </datalist>
+            <div class="selection-popup-actions">
+              <button class="selection-popup-btn" type="button" onclick={submitSelectedEntity}>
+                Assign
+              </button>
+              <button class="selection-popup-btn selection-popup-btn-secondary" type="button" onclick={closeSelectionPopup}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        {/if}
       </div>
     {:else}
       <div class="popup-content">{#each contentSegments as seg}{#if seg.isToken}<span
@@ -523,5 +735,123 @@
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+/* Entity legend */
+.entity-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.legend-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  border-bottom: 2px solid;
+}
+
+/* Entity highlighting in original view */
+.popup-content-original {
+  position: relative;
+}
+
+.entity-highlight {
+  border-radius: 2px;
+  padding: 1px 2px;
+  cursor: help;
+  position: relative;
+  border-bottom: 2px solid;
+}
+
+.entity-highlight:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 11px;
+  border-radius: 0px;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+  z-index: 60;
+  pointer-events: none;
+}
+
+/* Selection popup */
+.selection-popup {
+  position: absolute;
+  z-index: 70;
+  width: 280px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  border-radius: 0px;
+  padding: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.selection-popup-text {
+  font-size: 12px;
+  font-family: 'Geist Mono', monospace;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 8px;
+}
+
+.selection-popup-type {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 0px;
+  padding: 7px 9px;
+  box-sizing: border-box;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.selection-popup-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.selection-popup-btn {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 0px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: 'Geist Pixel', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 10px;
+  padding: 7px 8px;
+  cursor: pointer;
+}
+
+.selection-popup-btn:hover {
+  border-color: var(--border-accent);
+  background: var(--bg-primary);
+}
+
+.selection-popup-btn-secondary {
+  opacity: 0.82;
 }
 </style>
