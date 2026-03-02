@@ -26,14 +26,20 @@
 		| 'zap'
 		| 'sessions';
 
-	let { name, size = 24 }: { name: IconName; size?: number } = $props();
+	// Add colors handling
+	type Props = {
+		name: IconName;
+		size?: number;
+		color?: string; // Optional color prop
+	};
+	let { name, size = 24, color }: Props = $props();
 </script>
 
 <svg
 	xmlns="http://www.w3.org/2000/svg"
 	width={size}
 	height={size}
-	fill="currentColor"
+	fill={color || 'currentColor'}
 	viewBox="0 0 24 24"
 	shape-rendering="crispEdges"
 	aria-hidden="true"

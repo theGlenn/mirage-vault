@@ -412,8 +412,8 @@
     <div class="feed-area" bind:this={feedAreaEl}>
       {#if sortedEntries.length === 0}
         <div class="feed-empty">
-          <PixelIcon name="sessions" size={32} />
-          <p>No entries yet. Add files or paste LLM output to get started.</p>
+          <PixelIcon color="var(--color-orange)" name="download" size={32} />
+          <p>No entries yet<br/> Add files or paste LLM output to get started.</p>
         </div>
       {:else}
         <div class="feed-list">
@@ -751,10 +751,11 @@
   align-items: center;
   justify-content: center;
   gap: 12px;
-  color: var(--text-muted);
-  font-size: 13px;
+  color: var(--text-secondary);
+  font-size: 18px;
   text-align: center;
   padding: 48px 32px;
+  font-family: 'Geist Pixel', monospace;
 }
 
 .feed-empty p {
