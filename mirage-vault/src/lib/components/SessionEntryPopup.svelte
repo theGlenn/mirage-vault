@@ -3,6 +3,8 @@
   import PixelIcon from './PixelIcon.svelte';
   import type { SessionEntry } from './SessionEntryCard.svelte';
   import { BASE_ENTITY_TYPE_ORDER, createEntityTypeColorMap, normalizeEntityTypeName } from '$lib/entityColors';
+  import { generateGlitchText, GlitchAnimator, type GlitchAnimationState } from '$lib/glitchDecode';
+  import GlitchToken from './GlitchToken.svelte';
 
   interface EntityDetail {
     id: number;
@@ -71,6 +73,11 @@
   let selectionTypeInput = $state('PERSON');
   let selectionPopupLeft = $state(0);
   let selectionPopupTop = $state(0);
+
+  // Glitch decode state (masked mode only)
+  let hoveredTokenId: string | null = $state(null);
+  const glitchAnimator = new GlitchAnimator();
+  let animatingTokens = $state<Map<string, GlitchAnimationState>>(new Map());
 
   // For input entries, load full item detail if source_item_id exists
   $effect(() => {
@@ -304,6 +311,62 @@
     return segments.length ? segments : [{ text, isToken: false }];
   });
 
+  // Pre-compute glitch text for each unique token (deterministic, no flicker)
+  let glitchTextCache = $derived.by(() => {
+    const cache = new Map<string, string>();
+    for (const seg of contentSegments) {
+      if (seg.isToken && !cache.has(seg.text)) {
+        const len = seg.originalValue?.length ?? seg.text.length;
+        cache.set(seg.text, generateGlitchText(seg.text, len));
+      }
+    }
+    return cache;
+  });
+
+  function getTokenDisplayText(tokenId: string): string {
+    const animState = animatingTokens.get(tokenId);
+    if (animState) return animState.displayText;
+    return glitchTextCache.get(tokenId) ?? tokenId;
+  }
+
+  function getTokenPhase(tokenId: string): 'masked' | 'decoding' | 'decoded' {
+    return animatingTokens.get(tokenId)?.phase ?? 'masked';
+  }
+
+  function handleTokenMouseEnter(tokenId: string) {
+    hoveredTokenId = tokenId;
+    const originalValue = tokenMap.get(tokenId);
+    if (!originalValue) return;
+
+    glitchAnimator.startDecode(originalValue, (state) => {
+      animatingTokens = new Map(animatingTokens).set(tokenId, state);
+    });
+  }
+
+  function handleTokenMouseLeave(tokenId: string) {
+    if (hoveredTokenId !== tokenId) return;
+    hoveredTokenId = null;
+    glitchAnimator.stop();
+
+    const glitchText = glitchTextCache.get(tokenId) ?? tokenId;
+    animatingTokens = new Map(animatingTokens).set(tokenId, {
+      displayText: glitchText,
+      phase: 'masked',
+    });
+  }
+
+  // Cleanup animator on mode change or unmount
+  $effect(() => {
+    if (viewMode !== 'masked') {
+      glitchAnimator.stop();
+      hoveredTokenId = null;
+      animatingTokens = new Map();
+    }
+    return () => {
+      glitchAnimator.stop();
+    };
+  });
+
   let hasDecoded = $derived(entry.decoded_content != null);
   let showDecodeButton = $derived(!isInput && !hasDecoded);
 
@@ -469,11 +532,13 @@
         {/if}
       </div>
     {:else}
-      <div class="popup-content">{#each contentSegments as seg}{#if seg.isToken}<span
-              class="token-highlight"
-              class:token-known={seg.originalValue != null}
-              data-tooltip={seg.originalValue ? `→ ${seg.originalValue}` : 'Unknown token'}
-            >{seg.text}</span>{:else}{seg.text}{/if}{/each}</div>
+      <div class="popup-content">{#each contentSegments as seg}{#if seg.isToken}{@const phase = getTokenPhase(seg.text)}{@const displayText = getTokenDisplayText(seg.text)}<GlitchToken
+              {displayText}
+              {phase}
+              hovered={hoveredTokenId === seg.text}
+              onmouseenter={() => handleTokenMouseEnter(seg.text)}
+              onmouseleave={() => handleTokenMouseLeave(seg.text)}
+            />{:else}{seg.text}{/if}{/each}</div>
     {/if}
   </div>
 </div>
@@ -683,44 +748,6 @@
 
 .popup-loading p {
   margin: 0;
-}
-
-/* Token highlighting */
-.token-highlight {
-  border-radius: 2px;
-  padding: 1px 3px;
-  cursor: help;
-  position: relative;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.token-known {
-  background-color: rgba(232, 117, 26, 0.16);
-  border-bottom: 2px solid var(--accent-orange);
-}
-
-.token-highlight:not(.token-known) {
-  background-color: rgba(128, 128, 128, 0.12);
-  border-bottom: 2px solid var(--text-muted);
-}
-
-.token-highlight:hover::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  bottom: calc(100% + 4px);
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 4px 8px;
-  background: var(--bg-elevated);
-  color: var(--text-primary);
-  font-size: 11px;
-  font-weight: 400;
-  border-radius: 0px;
-  border: 1px solid var(--border);
-  white-space: nowrap;
-  z-index: 60;
-  pointer-events: none;
 }
 
 /* Spinner */

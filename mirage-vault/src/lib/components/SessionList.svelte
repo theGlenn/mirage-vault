@@ -197,9 +197,9 @@
   align-items: center;
   gap: 6px;
   padding: 8px 16px;
-  border: 2px solid var(--accent-orange);
+  border: 2px solid var(--color-orange);
   border-radius: 8px;
-  background-color: var(--accent-orange);
+  background-color: var(--color-orange);
   color: #fff;
   font-size: 13px;
   font-weight: 500;

@@ -18,7 +18,7 @@
 			onclick={() => onnavigate('browse')}
 			aria-current={activeView === 'browse' ? 'page' : undefined}
 		>
-			<PixelIcon name="folder" size={20} />
+			<PixelIcon name="folder" size={24} />
 			<span class="nav-label">BROWSE</span>
 		</button>
 		<button
@@ -27,7 +27,7 @@
 			onclick={() => onnavigate('sessions')}
 			aria-current={activeView === 'sessions' ? 'page' : undefined}
 		>
-			<PixelIcon name="sessions" size={20} />
+			<PixelIcon name="sessions" size={24} />
 			<span class="nav-label">SESSIONS</span>
 		</button>
 		<button
@@ -36,7 +36,7 @@
 			onclick={() => onnavigate('settings')}
 			aria-current={activeView === 'settings' ? 'page' : undefined}
 		>
-			<PixelIcon name="settings" size={20} />
+			<PixelIcon name="settings" size={24} />
 			<span class="nav-label">SETTINGS</span>
 		</button>
 	</nav>
@@ -103,7 +103,7 @@
 
 	.nav-label {
 		font-family: 'Geist Pixel', monospace;
-		font-size: 6px;
+		font-size: 8px;
 		letter-spacing: 0.05em;
 		text-transform: uppercase;
 	}

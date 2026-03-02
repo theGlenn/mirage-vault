@@ -291,8 +291,8 @@
   padding: 2px 8px;
   font-size: 10px;
   font-weight: 600;
-  text-transform: capitalize;
-  color: var(--accent-orange);
+  text-transform: capitalize;   
+  color: var(--color-orange);
   background: rgba(232, 117, 26, 0.12);
   border: 1px solid var(--accent-orange);
   border-radius: 4px;

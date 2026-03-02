@@ -1,7 +1,9 @@
 <script lang="ts">
   import PixelIcon from './PixelIcon.svelte';
+  import GlitchToken from './GlitchToken.svelte';
   import type { UploadProgress } from '$lib/types/upload';
   import { BASE_ENTITY_TYPE_ORDER, createEntityTypeColorMap, normalizeEntityTypeName } from '$lib/entityColors';
+  import { generateGlitchText, GlitchAnimator, type GlitchAnimationState } from '$lib/glitchDecode';
 
   interface EntityDetail {
     id: number;
@@ -27,6 +29,7 @@
   interface TextSegment {
     text: string;
     entity?: EntityDetail;
+    tokenId?: string;
   }
 
   interface ContentBlock {
@@ -47,7 +50,6 @@
   const BASE_ENTITY_TYPES: string[] = [...BASE_ENTITY_TYPE_ORDER];
 
   const MASK_TOKEN_PATTERN = /\[\[[A-Z_]+:[A-Za-z0-9]+\]\]/g;
-  const MASK_ASCII_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+-=[]{}|;:,.<>?/';
 
   function normalizeToken(token: string): string {
     return token.trim().toLowerCase();
@@ -67,35 +69,10 @@
     return null;
   }
 
-  function hashString(input: string): number {
-    let hash = 0;
-    for (let i = 0; i < input.length; i++) {
-      hash = ((hash << 5) - hash) + input.charCodeAt(i);
-      hash |= 0;
-    }
-    return hash >>> 0;
-  }
-
   function getEntityHighlightStyle(type: string): string {
     const normalized = normalizeEntityTypeName(type);
     const rgb = entityTypeColorMap.get(normalized) ?? '107 114 128';
     return `background-color: rgb(${rgb} / 0.16); border-bottom-color: rgb(${rgb});`;
-  }
-
-  function obfuscateAscii(seedInput: string, desiredLength: number): string {
-    const length = Math.max(6, Math.min(desiredLength, 24));
-    let seed = hashString(seedInput) || 0x9e3779b9;
-    let output = '';
-
-    for (let i = 0; i < length; i++) {
-      seed ^= seed << 13;
-      seed ^= seed >>> 17;
-      seed ^= seed << 5;
-      const idx = Math.abs(seed) % MASK_ASCII_CHARS.length;
-      output += MASK_ASCII_CHARS[idx];
-    }
-
-    return output;
   }
 
   function buildMaskedSegments(text: string, entities: EntityDetail[]): TextSegment[] {
@@ -140,8 +117,8 @@
       }
 
       const sourceLength = entity?.original_value.length || token.length;
-      const obfuscated = obfuscateAscii(`${token}|${entity?.original_value ?? ''}`, sourceLength);
-      segments.push({ text: obfuscated, entity });
+      const glitchText = generateGlitchText(`${token}|${entity?.original_value ?? ''}`, sourceLength);
+      segments.push({ text: glitchText, entity, tokenId: token });
       lastIndex = match.index + token.length;
     }
 
@@ -337,6 +314,65 @@
     }
   });
 
+  // Glitch decode state (masked mode only)
+  let hoveredTokenId: string | null = $state(null);
+  const glitchAnimator = new GlitchAnimator();
+  let animatingTokens = $state<Map<string, GlitchAnimationState>>(new Map());
+
+  // Build token → original_value map for decode animation
+  let tokenMap = $derived.by(() => {
+    const map = new Map<string, string>();
+    for (const e of selectedItem.entities) {
+      if (!map.has(e.token)) {
+        map.set(e.token, e.original_value);
+      }
+    }
+    return map;
+  });
+
+  function getTokenDisplayText(tokenId: string, fallback: string): string {
+    const animState = animatingTokens.get(tokenId);
+    if (animState) return animState.displayText;
+    return fallback;
+  }
+
+  function getTokenPhase(tokenId: string): 'masked' | 'decoding' | 'decoded' {
+    return animatingTokens.get(tokenId)?.phase ?? 'masked';
+  }
+
+  function handleTokenMouseEnter(tokenId: string) {
+    hoveredTokenId = tokenId;
+    const originalValue = tokenMap.get(tokenId);
+    if (!originalValue) return;
+
+    glitchAnimator.startDecode(originalValue, (state) => {
+      animatingTokens = new Map(animatingTokens).set(tokenId, state);
+    });
+  }
+
+  function handleTokenMouseLeave(tokenId: string, fallbackGlitch: string) {
+    if (hoveredTokenId !== tokenId) return;
+    hoveredTokenId = null;
+    glitchAnimator.stop();
+
+    animatingTokens = new Map(animatingTokens).set(tokenId, {
+      displayText: fallbackGlitch,
+      phase: 'masked',
+    });
+  }
+
+  // Cleanup animator on mode change or unmount
+  $effect(() => {
+    if (viewMode !== 'masked') {
+      glitchAnimator.stop();
+      hoveredTokenId = null;
+      animatingTokens = new Map();
+    }
+    return () => {
+      glitchAnimator.stop();
+    };
+  });
+
   let isStillProcessing = $derived(
     uploadProgress != null &&
     uploadProgress.stage !== 'done' &&
@@ -439,7 +475,13 @@
         </div>
       </div>
     {:else if viewMode === 'masked'}
-      <div class="viewer-content">{#each splitByPageMarkers(selectedItem.masked_content) as seg}{#if seg.type === 'marker'}<div class="page-marker">{seg.text}</div>{:else}{#each buildMaskedSegments(seg.text, selectedItem.entities) as segment}{#if segment.entity}<span class="entity-highlight masked-obfuscated" style={getEntityHighlightStyle(segment.entity.entity_type)} data-tooltip="{'\u2192'} {segment.entity.original_value}">{segment.text}</span>{:else}{segment.text}{/if}{/each}{/if}{/each}</div>
+      <div class="viewer-content">{#each splitByPageMarkers(selectedItem.masked_content) as seg}{#if seg.type === 'marker'}<div class="page-marker">{seg.text}</div>{:else}{#each buildMaskedSegments(seg.text, selectedItem.entities) as segment}{#if segment.tokenId}{@const phase = getTokenPhase(segment.tokenId)}{@const displayText = getTokenDisplayText(segment.tokenId, segment.text)}<GlitchToken
+              {displayText}
+              {phase}
+              hovered={hoveredTokenId === segment.tokenId}
+              onmouseenter={() => handleTokenMouseEnter(segment.tokenId!)}
+              onmouseleave={() => handleTokenMouseLeave(segment.tokenId!, segment.text)}
+            />{:else}{segment.text}{/if}{/each}{/if}{/each}</div>
     {:else}
       <div class="viewer-content viewer-content-original" role="presentation" bind:this={originalContentEl} onmouseup={handleOriginalMouseUp}>
         {#each splitByPageMarkers(selectedItem.raw_content) as seg}
@@ -788,11 +830,6 @@
   cursor: help;
   position: relative;
   border-bottom: 2px solid;
-}
-
-.masked-obfuscated {
-  letter-spacing: 0.04em;
-  font-weight: 600;
 }
 
 .entity-highlight:hover::after {
