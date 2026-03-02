@@ -12,6 +12,7 @@
   import type { ItemDetail } from '$lib/components/FileViewer.svelte';
   import type { VaultItem } from '$lib/components/FileCard.svelte';
   import EntityPanel from '$lib/components/EntityPanel.svelte';
+  import type { SessionEntityOutput } from '$lib/components/EntityPanel.svelte';
   import SettingsScreen from '$lib/components/SettingsScreen.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import SessionList from '$lib/components/SessionList.svelte';
@@ -38,6 +39,8 @@
   let searchQuery = $state('');
   let selectedSessionId: number | null = $state(null);
   let sessionDetailRef: SessionDetail | undefined = $state(undefined);
+  let sessionEntities: SessionEntityOutput[] = $state([]);
+  let sessionViewItem: ItemDetail | null = $state(null);
   let toastMessage = $state('');
   let toastTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -866,7 +869,7 @@
 
 <div class="app-layout">
   <!-- Left Sidebar: Navigation -->
-  <Sidebar {activeView} onnavigate={(view) => { activeView = view; if (view !== 'browse') { selectedItemId = null; selectedItem = null; } if (view !== 'sessions') { selectedSessionId = null; } }} />
+  <Sidebar {activeView} onnavigate={(view) => { activeView = view; if (view !== 'browse') { selectedItemId = null; selectedItem = null; } if (view !== 'sessions') { selectedSessionId = null; sessionEntities = []; sessionViewItem = null; } }} />
 
   <!-- Center: Content Area -->
   <main
@@ -878,7 +881,7 @@
       <SettingsScreen />
     {:else if activeView === 'sessions'}
       {#if selectedSessionId != null}
-        <SessionDetail bind:this={sessionDetailRef} sessionId={selectedSessionId} {dragOver} onback={() => { selectedSessionId = null; }} />
+        <SessionDetail bind:this={sessionDetailRef} sessionId={selectedSessionId} {dragOver} onback={() => { selectedSessionId = null; sessionViewItem = null; sessionEntities = []; }} onsessionentitieschange={(entities) => { sessionEntities = entities; }} onentryitemchange={(item) => { sessionViewItem = item; }} />
       {:else}
         <SessionList onselectsession={(id) => { selectedSessionId = id; }} />
       {/if}
@@ -940,6 +943,8 @@
     {activeView}
     {selectedItem}
     {items}
+    {sessionEntities}
+    {sessionViewItem}
     onrequestdeletecustomtype={requestDeleteCustomEntityType}
   />
 </div>

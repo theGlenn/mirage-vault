@@ -49,12 +49,16 @@
     sessionId,
     dragOver = false,
     onback,
-    ondropfiles
+    ondropfiles,
+    onentryitemchange,
+    onsessionentitieschange
   }: {
     sessionId: number;
     dragOver?: boolean;
     onback: () => void;
     ondropfiles?: (paths: string[]) => void;
+    onentryitemchange?: (item: ItemDetail | null) => void;
+    onsessionentitieschange?: (entities: SessionEntityOutput[]) => void;
   } = $props();
 
   let session: SessionDetailData | null = $state(null);
@@ -109,14 +113,29 @@
   async function loadSessionEntities() {
     try {
       sessionEntities = await invoke<SessionEntityOutput[]>('get_session_entities', { sessionId });
+      onsessionentitieschange?.(sessionEntities);
     } catch (err) {
       console.error('Failed to load session entities:', err);
     }
   }
 
-  function handleEntrySelect(entryId: number) {
+  async function handleEntrySelect(entryId: number) {
     selectedEntryId = entryId;
     loadSessionEntities();
+
+    // Load item detail for input entries and notify parent
+    const entry = session?.entries.find(e => e.id === entryId);
+    if (entry?.source_item_id != null) {
+      try {
+        const detail = await invoke<ItemDetail>('get_item', { itemId: entry.source_item_id });
+        onentryitemchange?.(detail);
+      } catch (err) {
+        console.error('Failed to load entry item detail:', err);
+        onentryitemchange?.(null);
+      }
+    } else {
+      onentryitemchange?.(null);
+    }
   }
 
   async function handleEntryPopupRefresh() {
@@ -175,6 +194,7 @@
       await invoke('decode_session_entry', { sessionId, entryId });
 
       await loadSession();
+      await loadSessionEntities();
       pasteText = '';
       await scrollToBottom();
     } catch (err) {
@@ -213,6 +233,7 @@
 
       // Refresh session data
       await loadSession();
+      await loadSessionEntities();
       await scrollToBottom();
     } catch (err) {
       console.error('Failed to add vault item to session:', err);
@@ -237,6 +258,7 @@
 
   onMount(() => {
     loadSession();
+    loadSessionEntities();
   });
 </script>
 
@@ -343,7 +365,7 @@
         entry={selectedEntry}
         {sessionId}
         {sessionEntities}
-        onclose={() => { selectedEntryId = null; }}
+        onclose={() => { selectedEntryId = null; onentryitemchange?.(null); }}
         onrefresh={handleEntryPopupRefresh}
       />
     {/if}

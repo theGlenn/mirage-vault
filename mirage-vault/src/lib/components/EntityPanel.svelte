@@ -28,6 +28,12 @@
     items: EntityGroupItem[];
   }
 
+  export interface SessionEntityOutput {
+    entity_type: string;
+    original_value: string;
+    token: string;
+  }
+
   export function groupEntitiesByType(entities: ItemDetail['entities']): EntityGroup[] {
     const groups: Map<string, Map<string, EntityGroupItem>> = new Map();
     for (const e of entities) {
@@ -62,6 +68,39 @@
     }
     return result;
   }
+
+  export function groupSessionEntities(entities: SessionEntityOutput[]): EntityGroup[] {
+    const groups: Map<string, Map<string, EntityGroupItem>> = new Map();
+    for (const e of entities) {
+      const type = normalizeEntityTypeNameForGrouping(e.entity_type);
+      if (!type) continue;
+      if (!groups.has(type)) {
+        groups.set(type, new Map());
+      }
+      const typeMap = groups.get(type)!;
+      if (!typeMap.has(e.token)) {
+        typeMap.set(e.token, { original_value: e.original_value, token: e.token, count: 1 });
+      }
+    }
+
+    const extraTypes = Array.from(groups.keys())
+      .filter((type) => !ORDERED_BASE_ENTITY_TYPES.includes(type))
+      .sort((a, b) => a.localeCompare(b));
+    const orderedTypes = [...ORDERED_BASE_ENTITY_TYPES, ...extraTypes];
+
+    const result: EntityGroup[] = [];
+    for (const type of orderedTypes) {
+      const typeMap = groups.get(type);
+      if (typeMap && typeMap.size > 0) {
+        result.push({
+          type,
+          label: ENTITY_TYPE_LABELS[type] || type,
+          items: Array.from(typeMap.values())
+        });
+      }
+    }
+    return result;
+  }
 </script>
 
 <script lang="ts">
@@ -71,10 +110,12 @@
     normalizeEntityTypeName as normalizeEntityTypeNameForSwatch
   } from '$lib/entityColors';
 
-  let { activeView, selectedItem, items, onrequestdeletecustomtype }: {
+  let { activeView, selectedItem, items, sessionEntities, sessionViewItem, onrequestdeletecustomtype }: {
     activeView: 'browse' | 'sessions' | 'settings';
     selectedItem: ItemDetail | null;
     items: VaultItem[];
+    sessionEntities?: SessionEntityOutput[];
+    sessionViewItem?: ItemDetail | null;
     onrequestdeletecustomtype: (entityType: string) => void;
   } = $props();
 
@@ -92,8 +133,21 @@
   });
 
   let entityTypeColorMap = $derived.by(() => {
+    if (activeView === 'sessions') {
+      // Color map for session view: use sessionViewItem entities if available, otherwise session entities
+      const types = sessionViewItem
+        ? sessionViewItem.entities.map((e) => e.entity_type)
+        : (sessionEntities ?? []).map((e) => e.entity_type);
+      return createEntityTypeColorMap(types);
+    }
     if (!selectedItem) return createEntityTypeColorMap([]);
     return createEntityTypeColorMap(selectedItem.entities.map((entity) => entity.entity_type));
+  });
+
+  // Grouped session entities for display
+  let sessionEntityGroups = $derived.by(() => {
+    if (!sessionEntities || sessionEntities.length === 0) return [];
+    return groupSessionEntities(sessionEntities);
   });
 
   function getSwatchStyle(type: string): string {
@@ -109,8 +163,59 @@
 
 </script>
 
-{#if activeView === 'browse'}
+{#if activeView === 'browse' || activeView === 'sessions'}
   <aside class="sidebar sidebar-right">
+    {#if activeView === 'sessions'}
+      <div class="sidebar-header">
+        <h2>{sessionViewItem ? 'ENTITIES' : 'SESSION'}</h2>
+      </div>
+      <div class="sidebar-content">
+        {#if sessionViewItem}
+          {#each groupEntitiesByType(sessionViewItem.entities) as group (group.type)}
+            <div class="entity-group">
+              <div class="entity-group-header">
+                <div class="entity-group-header-left">
+                  <span class="entity-group-swatch" style={getSwatchStyle(group.type)}></span>
+                  {group.label}
+                </div>
+              </div>
+              {#each group.items as item (item.token)}
+                <div class="entity-group-item">
+                  <div class="entity-group-item-value">{item.original_value}</div>
+                  <div class="entity-group-item-meta">
+                    <span class="entity-group-item-token">{item.token}</span>
+                    <span class="entity-group-item-count">{item.count}x</span>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <p class="empty-state">No entities detected</p>
+          {/each}
+        {:else if sessionEntityGroups.length > 0}
+          {#each sessionEntityGroups as group (group.type)}
+            <div class="entity-group">
+              <div class="entity-group-header">
+                <div class="entity-group-header-left">
+                  <span class="entity-group-swatch" style={getSwatchStyle(group.type)}></span>
+                  {group.label}
+                </div>
+              </div>
+              {#each group.items as item (item.token)}
+                <div class="entity-group-item">
+                  <div class="entity-group-item-value">{item.original_value}</div>
+                  <div class="entity-group-item-meta">
+                    <span class="entity-group-item-token">{item.token}</span>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/each}
+        {:else}
+          <p class="empty-state">No entities in session</p>
+        {/if}
+      </div>
+    {:else}
     <div class="sidebar-header">
       <h2>{selectedItem ? 'ENTITIES' : 'VAULT'}</h2>
     </div>
@@ -174,6 +279,7 @@
         <p class="empty-state">No files in vault</p>
       {/if}
     </div>
+    {/if}
   </aside>
 {/if}
 
